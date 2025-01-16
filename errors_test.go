@@ -29,7 +29,7 @@ func ErrorIs(allExpectedErrors ...error) func(require.TestingT, error, ...interf
 		}
 		for _, expected := range allExpectedErrors {
 			if !errors.Is(err, expected) {
-				t.Errorf("error unexpected.\nExpected error: %T(%s) \nGot           : %T(%s)", expected, expected.Error(), err, err.Error())
+				t.Errorf("error unexpected.\nExpected error: %T(%s) \nGot           : %T(%s)", expected, expected.Error(), err, err.Error()) //nolint:testifylint
 			}
 		}
 	}

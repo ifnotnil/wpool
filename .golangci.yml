@@ -45,16 +45,19 @@ issues:
     - EXC0005
     - EXC0006
   exclude-rules:
-    - path: 'error_test.go'
-      linters: [thelper, errorlint]
     - path: '(.+)_test\.go'
       linters: [gochecknoglobals, goconst, goerr113, mnd, dupl, maintidx, gocyclo, err113]
+
     # Exclude govet fieldalignment in tests.
     - path: '(.+)_test\.go'
       linters: [govet]
       text: 'fieldalignment:'
-    - path: internal/tesatingx/testdata
-      linters: [gochecknoglobals, goconst, goerr113, mnd, dupl, maintidx]
+
+    # Exclude revive unused-parameter in tests.
+    - path: '(.+)_test\.go'
+      linters: [revive]
+      text: 'unused-parameter:'
+
 
 linters-settings:
 
@@ -125,5 +128,5 @@ linters-settings:
 
   # https://golangci-lint.run/usage/linters/#gofumpt
   gofumpt:
-    module-path: github.com/moukoublen/pick
+    module-path: github.com/ifnotnil/wpool
     extra-rules: true
