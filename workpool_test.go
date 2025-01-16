@@ -2,6 +2,8 @@ package wpool
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -131,6 +133,13 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		cancel()
 
 		wg.Wait()
+		subject.Stop(ctx)
+	})
+
+	t.Run("noop with logs", func(t *testing.T) {
+		cb := func(ctx context.Context, item int) {}
+		subject := NewWorkerPool(cb, WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))))
+		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
 }
