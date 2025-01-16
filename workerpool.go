@@ -9,23 +9,60 @@ import (
 	"sync/atomic"
 )
 
+type disabledSlogHandler struct{}
+
+func (d disabledSlogHandler) Enabled(_ context.Context, _ slog.Level) bool  { return false }
+func (d disabledSlogHandler) Handle(_ context.Context, _ slog.Record) error { return nil }
+func (d disabledSlogHandler) WithAttrs(_ []slog.Attr) slog.Handler          { return disabledSlogHandler{} }
+func (d disabledSlogHandler) WithGroup(_ string) slog.Handler               { return disabledSlogHandler{} }
+
+type config struct {
+	logger            *slog.Logger
+	channelBufferSize int
+}
+
+func defaultConfig() config {
+	return config{
+		logger:            slog.New(disabledSlogHandler{}),
+		channelBufferSize: 0,
+	}
+}
+
+func WithChannelBufferSize(s int) func(*config) {
+	return func(c *config) { c.channelBufferSize = s }
+}
+
+func WithLogger(l *slog.Logger) func(*config) {
+	return func(c *config) { c.logger = l }
+}
+
 type WorkerPool[T any] struct {
 	logger      *slog.Logger
 	ch          chan T
 	stopped     chan struct{}
 	cb          func(ctx context.Context, item T)
 	workersWG   sync.WaitGroup
-	rwMutex     sync.RWMutex
+	chRWMutex   sync.RWMutex
 	once        sync.Once
 	stoppedBool atomic.Bool
 }
 
-func NewWorkerPool[T any](logger *slog.Logger, channelBufferSize int, callback func(ctx context.Context, item T)) *WorkerPool[T] {
+func NewWorkerPool[T any](callback func(ctx context.Context, item T), opts ...func(*config)) *WorkerPool[T] {
+	c := defaultConfig()
+
+	for _, o := range opts {
+		o(&c)
+	}
+
 	return &WorkerPool[T]{
-		logger:  logger,
-		ch:      make(chan T, channelBufferSize),
-		stopped: make(chan struct{}),
-		cb:      callback,
+		logger:      c.logger,
+		ch:          make(chan T, c.channelBufferSize),
+		stopped:     make(chan struct{}),
+		cb:          callback,
+		workersWG:   sync.WaitGroup{},
+		chRWMutex:   sync.RWMutex{},
+		once:        sync.Once{},
+		stoppedBool: atomic.Bool{},
 	}
 }
 
@@ -34,8 +71,8 @@ func (p *WorkerPool[T]) Submit(ctx context.Context, item T) error {
 		return ErrWorkerPoolStopped
 	}
 
-	p.rwMutex.RLock()
-	defer p.rwMutex.RUnlock()
+	p.chRWMutex.RLock() // acquire read lock to send to ch.
+	defer p.chRWMutex.RUnlock()
 
 	select {
 	case <-p.stopped: // to cover the case where while waiting to send (because the channel is filled), pool stops.
@@ -86,8 +123,8 @@ func (p *WorkerPool[T]) close(ctx context.Context) {
 	p.stoppedBool.Store(true) // stop receiving.
 	close(p.stopped)          // stop receiving.
 	func() {
-		p.rwMutex.Lock() // acquire read lock to close ch.
-		defer p.rwMutex.Unlock()
+		p.chRWMutex.Lock() // acquire write lock to close ch.
+		defer p.chRWMutex.Unlock()
 		close(p.ch) // stop accepting.
 	}()
 	p.workersWG.Wait() // wait for workers to stop.

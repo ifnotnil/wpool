@@ -2,8 +2,6 @@ package wpool
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -18,21 +16,16 @@ func TestMain(m *testing.M) {
 func TestWorkerPoolLifeCycle(t *testing.T) {
 	ctx := context.Background()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		AddSource: false,
-		Level:     slog.LevelError,
-	}))
-
 	t.Run("noop", func(t *testing.T) {
 		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(logger, 0, cb)
+		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
 
 	t.Run("send to closed pool", func(t *testing.T) {
 		cb := func(_ context.Context, _ int) {}
-		subject := NewWorkerPool(logger, 0, cb)
+		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 		err := subject.Submit(ctx, 1)
@@ -43,7 +36,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		cb := func(_ context.Context, it int) {
 			time.Sleep(60 * time.Millisecond)
 		}
-		subject := NewWorkerPool(logger, 0, cb)
+		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
 
 		wg := sync.WaitGroup{}
@@ -67,7 +60,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		cb := func(_ context.Context, it int) {
 			time.Sleep(60 * time.Millisecond)
 		}
-		subject := NewWorkerPool(logger, 0, cb)
+		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
 
 		wg := sync.WaitGroup{}
