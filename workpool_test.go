@@ -17,9 +17,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestWorkerPoolLifeCycle(t *testing.T) {
-	ctx := context.Background()
-
 	t.Run("noop", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
 		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
@@ -27,6 +26,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("noop multiple stops", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
 		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
@@ -36,6 +36,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("buffered channel", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
 		subject := NewWorkerPool(cb, WithChannelBufferSize(10))
 		err := subject.Submit(ctx, 1)
@@ -47,7 +48,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("submit fails because of ctx cancellation", func(t *testing.T) {
-		ctx2, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
 
 		cb := func(ctx context.Context, item int) {}
 		subject := NewWorkerPool(cb)
@@ -59,11 +60,12 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 			cancel()
 		}()
 
-		err := subject.Submit(ctx2, 1)
+		err := subject.Submit(ctx, 1)
 		ErrorStringContains("context canceled")(t, err)
 	})
 
 	t.Run("submit fails because pool closes", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
 		subject := NewWorkerPool(cb)
 
@@ -80,6 +82,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("send to closed pool", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(_ context.Context, _ int) {}
 		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
@@ -89,6 +92,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("close while sending", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(_ context.Context, it int) {
 			time.Sleep(60 * time.Millisecond)
 		}
@@ -113,23 +117,21 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 	t.Run("close with ctx cancel while sending", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		cb := func(_ context.Context, it int) {
-			time.Sleep(60 * time.Millisecond)
-		}
+		cb := func(_ context.Context, it int) { time.Sleep(60 * time.Millisecond) }
 		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
 
 		wg := sync.WaitGroup{}
 		wg.Add(1)
-		go func() {
+		go func(ctx context.Context) {
 			defer wg.Done()
 			for i := range 100 {
-				err := subject.Submit(context.Background(), i)
+				err := subject.Submit(ctx, i)
 				if err != nil {
 					ErrorIs(ErrWorkerPoolStopped)(t, err)
 				}
 			}
-		}()
+		}(context.Background())
 		cancel()
 
 		wg.Wait()
@@ -137,6 +139,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("noop with logs", func(t *testing.T) {
+		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
 		subject := NewWorkerPool(cb, WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 		subject.Start(ctx, 10)
