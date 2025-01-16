@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -21,6 +22,59 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject := NewWorkerPool(cb)
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
+	})
+
+	t.Run("noop multiple stops", func(t *testing.T) {
+		cb := func(ctx context.Context, item int) {}
+		subject := NewWorkerPool(cb)
+		subject.Start(ctx, 10)
+		subject.Stop(ctx)
+		subject.Stop(ctx)
+		subject.Stop(ctx)
+	})
+
+	t.Run("buffered channel", func(t *testing.T) {
+		cb := func(ctx context.Context, item int) {}
+		subject := NewWorkerPool(cb, WithChannelBufferSize(10))
+		err := subject.Submit(ctx, 1)
+		require.NoError(t, err)
+		err = subject.Submit(ctx, 2)
+		require.NoError(t, err)
+		err = subject.Submit(ctx, 3)
+		require.NoError(t, err)
+	})
+
+	t.Run("submit fails because of ctx cancellation", func(t *testing.T) {
+		ctx2, cancel := context.WithCancel(context.Background())
+
+		cb := func(ctx context.Context, item int) {}
+		subject := NewWorkerPool(cb)
+
+		// don't start workers to block the submit.
+
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			cancel()
+		}()
+
+		err := subject.Submit(ctx2, 1)
+		ErrorStringContains("context canceled")(t, err)
+	})
+
+	t.Run("submit fails because pool closes", func(t *testing.T) {
+		cb := func(ctx context.Context, item int) {}
+		subject := NewWorkerPool(cb)
+
+		// don't start workers to block the submit.
+		subject.Start(ctx, 0) // noop start
+
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			subject.close(ctx)
+		}()
+
+		err := subject.Submit(ctx, 1)
+		ErrorIs(ErrWorkerPoolStopped)(t, err)
 	})
 
 	t.Run("send to closed pool", func(t *testing.T) {
@@ -55,7 +109,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		wg.Wait()
 	})
 
-	t.Run("close while ctx cancel", func(t *testing.T) {
+	t.Run("close with ctx cancel while sending", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cb := func(_ context.Context, it int) {
 			time.Sleep(60 * time.Millisecond)

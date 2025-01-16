@@ -85,7 +85,10 @@ func (p *WorkerPool[T]) Submit(ctx context.Context, item T) error {
 }
 
 func (p *WorkerPool[T]) Start(ctx context.Context, numOfWorkers int) {
-	p.logger.InfoContext(ctx, "PooledWorkers starting", slog.Int("workers_count", numOfWorkers))
+	p.logger.InfoContext(ctx, "worker pool starting", slog.Int("workers_count", numOfWorkers))
+	if numOfWorkers <= 0 {
+		return
+	}
 	p.workersWG.Add(numOfWorkers)
 	for i := range numOfWorkers {
 		go p.worker(ctx, i)
@@ -119,7 +122,7 @@ func (p *WorkerPool[T]) Stop(ctx context.Context) {
 }
 
 func (p *WorkerPool[T]) close(ctx context.Context) {
-	p.logger.InfoContext(ctx, "PooledWorkers shutting down")
+	p.logger.InfoContext(ctx, "worker pool shutting down")
 	p.stoppedBool.Store(true) // stop receiving.
 	close(p.stopped)          // stop receiving.
 	func() {
@@ -128,5 +131,5 @@ func (p *WorkerPool[T]) close(ctx context.Context) {
 		close(p.ch) // stop accepting.
 	}()
 	p.workersWG.Wait() // wait for workers to stop.
-	p.logger.InfoContext(ctx, "PooledWorkers shutdown completed")
+	p.logger.InfoContext(ctx, "worker pool shutdown completed")
 }
