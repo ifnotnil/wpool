@@ -2,8 +2,6 @@ module github.com/ifnotnil/wpool
 
 go 1.22
 
-toolchain go1.23.4
-
 require (
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/goleak v1.3.0
