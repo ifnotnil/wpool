@@ -25,6 +25,33 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Stop(ctx)
 	})
 
+	t.Run("happy path send and read", func(t *testing.T) {
+		ctx := context.Background()
+
+		expected := sync.Map{}
+		expected.Store(1, nil)
+		expected.Store(2, nil)
+		expected.Store(3, nil)
+		cb := func(ctx context.Context, item int) {
+			expected.Delete(item)
+		}
+
+		subject := NewWorkerPool(cb)
+		subject.Start(ctx, 4)
+		err := subject.Submit(ctx, 1)
+		require.NoError(t, err)
+		err = subject.Submit(ctx, 2)
+		require.NoError(t, err)
+		err = subject.Submit(ctx, 3)
+		require.NoError(t, err)
+		subject.Stop(ctx)
+
+		expected.Range(func(key, value any) bool {
+			t.Errorf("expected all keys to be deleted: %#v", key)
+			return true
+		})
+	})
+
 	t.Run("noop multiple stops", func(t *testing.T) {
 		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
