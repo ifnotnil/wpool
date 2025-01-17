@@ -4,6 +4,9 @@
 codecov:
   strict_yaml_branch: default  # only use the latest YAML on stated branch
 
+ignore:
+  - disabled.go
+
 # https://docs.codecov.com/docs/pull-request-comments
 comment:
   layout: "condensed_header, condensed_files, condensed_footer"

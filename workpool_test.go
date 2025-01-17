@@ -101,7 +101,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 		go func() {
 			time.Sleep(200 * time.Millisecond)
-			subject.close(ctx)
+			subject.Stop(ctx)
 		}()
 
 		err := subject.Submit(ctx, 1)
