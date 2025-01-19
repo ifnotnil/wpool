@@ -38,3 +38,31 @@ This is, in general, the principle that should be followed: the sender should cl
 But in some cases (let's say an application-wide event queue), we might want different code parts to be able to send events. In that case, the sender is not the sole owner of the channel, and closing the channel could lead to panic if other parts of the code (other senders) try to send to it after closing.
 
 This solution wraps a graceful shutdown process where it first stops accepting new submissions, meaning that any attempt for submission after that point will result in returning an error. Then, closes the main channel and waits for all workers to finish processing all items already submitted to the channel (in case of buffered channel) or finish mid-flight processing. After all the workers are done and return, the stop function unblocks and finishes.
+
+## Examples
+
+```golang
+func Callback(ctx context.Context, item string) {
+	slog.Default().Info("cb", slog.String("item", item))
+}
+
+func main() {
+	logger := slog.Default()
+
+	p := wpool.NewWorkerPool(
+		Callback,
+		wpool.WithChannelBufferSize(100),
+		wpool.WithLogger(logger),
+	)
+
+	ctx := context.Background()
+
+	p.Start(ctx, 10) // start 10 workers
+
+	p.Submit(ctx, "one")
+	p.Submit(ctx, "two")
+	p.Submit(ctx, "three")
+
+	p.Stop(context.Background())
+}
+```
