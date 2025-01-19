@@ -3,11 +3,14 @@ package wpool
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -172,4 +175,40 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
+}
+
+func TestMultipleSenders(t *testing.T) {
+	ctx := context.Background()
+
+	const senders = 40
+	const perSender = 4000
+	count := &atomic.Int64{}
+
+	cb := func(_ context.Context, _ int) { count.Add(1) }
+	subject := NewWorkerPool(cb, WithChannelBufferSize(3))
+	subject.Start(ctx, 5)
+
+	wg := sync.WaitGroup{}
+	wg.Add(senders)
+	startSignal := make(chan struct{})
+	for range senders {
+		go func() {
+			defer wg.Done()
+			<-startSignal
+			for i := range perSender {
+				err := subject.Submit(ctx, i)
+				require.NoError(t, err)
+			}
+		}()
+	}
+	close(startSignal)
+	wg.Wait()
+
+	subject.Stop(ctx)
+
+	assert.Equal(t, int64(senders*perSender), count.Load())
+}
+
+func randRange(mn, mx int) int {
+	return rand.IntN(mx-mn) + mn
 }
