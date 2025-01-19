@@ -20,7 +20,7 @@ The `wpool` module implements a bounded worker pool. It provides a safe, concurr
 
 
 ## Why and What
-The `wpool` should be used when you want to have multiple senders (e.g. events from different services/sources) and/or
+The `wpool` should be used when you want to have multiple senders (e.g. events from different services/sources) with graceful shutdown and/or capped worker approach over channel receiving.
 
 ### Bounded / Capped workers approach
 
