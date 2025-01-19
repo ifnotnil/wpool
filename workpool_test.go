@@ -3,7 +3,6 @@ package wpool
 import (
 	"context"
 	"log/slog"
-	"math/rand/v2"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -197,7 +196,7 @@ func TestMultipleSenders(t *testing.T) {
 			<-startSignal
 			for i := range perSender {
 				err := subject.Submit(ctx, i)
-				require.NoError(t, err)
+				assert.NoError(t, err)
 			}
 		}()
 	}
@@ -207,8 +206,4 @@ func TestMultipleSenders(t *testing.T) {
 	subject.Stop(ctx)
 
 	assert.Equal(t, int64(senders*perSender), count.Load())
-}
-
-func randRange(mn, mx int) int {
-	return rand.IntN(mx-mn) + mn
 }
