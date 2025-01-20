@@ -16,7 +16,7 @@ The `wpool` module implements a bounded worker pool. It provides a safe, concurr
     4. Wait for all workers go routines to finish mid-flight processing and pending items in channel and then return.
     5. Then `Stop` unblocks and finishes.
 
-![diagram](./docs/diagram.png)
+![diagram](./docs/wpool_diagram.png)
 
 
 ## Why and What
