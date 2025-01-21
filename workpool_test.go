@@ -167,6 +167,15 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Stop(ctx)
 	})
 
+	t.Run("close with ctx cancel before sending", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cb := func(_ context.Context, it int) { time.Sleep(60 * time.Millisecond) }
+		subject := NewWorkerPool(cb)
+		cancel()
+		err := subject.Submit(ctx, 1)
+		ErrorStringContains("worker pool item submission failed due to context cancellation")(t, err)
+	})
+
 	t.Run("noop with logs", func(t *testing.T) {
 		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
@@ -206,4 +215,39 @@ func TestMultipleSenders(t *testing.T) {
 	subject.Stop(ctx)
 
 	assert.Equal(t, int64(senders*perSender), count.Load())
+}
+
+func BenchmarkSubmit(b *testing.B) {
+	ctx := context.Background()
+	cb := func(_ context.Context, _ int) {}
+
+	subject := NewWorkerPool(cb, WithChannelBufferSize(b.N+1))
+
+	b.ResetTimer()
+	for i := range b.N {
+		_ = subject.Submit(ctx, i)
+	}
+	b.StopTimer()
+
+	subject.Stop(ctx)
+}
+
+func BenchmarkWork(b *testing.B) {
+	ctx := context.Background()
+	cb := func(_ context.Context, i int) {}
+
+	subject := NewWorkerPool(cb, WithChannelBufferSize(b.N+1))
+
+	for i := range b.N {
+		_ = subject.Submit(ctx, i)
+	}
+	close(subject.ch)
+
+	subject.workersWG.Add(1)
+	// b.ResetTimer()
+	// subject.worker(ctx, 0)
+	// b.StopTimer()
+	b.Run("worker fn", func(b *testing.B) {
+		subject.worker(ctx, 0)
+	})
 }
