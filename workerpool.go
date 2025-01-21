@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 )
 
 type config struct {
@@ -30,14 +29,13 @@ func WithLogger(l *slog.Logger) func(*config) {
 }
 
 type WorkerPool[T any] struct {
-	logger      *slog.Logger
-	ch          chan T
-	stopped     chan struct{}
-	cb          func(ctx context.Context, item T)
-	workersWG   sync.WaitGroup
-	chRWMutex   sync.RWMutex
-	once        sync.Once
-	stoppedBool atomic.Bool
+	logger    *slog.Logger
+	ch        chan T
+	stopped   chan struct{}
+	cb        func(ctx context.Context, item T)
+	workersWG sync.WaitGroup
+	chRWMutex sync.RWMutex
+	once      sync.Once
 }
 
 func NewWorkerPool[T any](callback func(ctx context.Context, item T), opts ...func(*config)) *WorkerPool[T] {
@@ -48,24 +46,29 @@ func NewWorkerPool[T any](callback func(ctx context.Context, item T), opts ...fu
 	}
 
 	return &WorkerPool[T]{
-		logger:      c.logger,
-		ch:          make(chan T, c.channelBufferSize),
-		stopped:     make(chan struct{}),
-		cb:          callback,
-		workersWG:   sync.WaitGroup{},
-		chRWMutex:   sync.RWMutex{},
-		once:        sync.Once{},
-		stoppedBool: atomic.Bool{},
+		logger:    c.logger,
+		ch:        make(chan T, c.channelBufferSize),
+		stopped:   make(chan struct{}),
+		cb:        callback,
+		workersWG: sync.WaitGroup{},
+		chRWMutex: sync.RWMutex{},
+		once:      sync.Once{},
 	}
 }
 
 func (p *WorkerPool[T]) Submit(ctx context.Context, item T) error {
-	if p.stoppedBool.Load() {
-		return ErrWorkerPoolStopped
-	}
-
 	p.chRWMutex.RLock() // acquire read lock to send to ch.
 	defer p.chRWMutex.RUnlock()
+
+	// To avoid writing to a closed p.ch and cause a panic, check if we are stopped first. In the select below, this can
+	// NOT happen, because p.ch cannot close while we hold the lock.
+	select {
+	case <-p.stopped:
+		return ErrWorkerPoolStopped
+	case <-ctx.Done():
+		return fmt.Errorf("worker pool item submission failed due to context cancellation: %w", ctx.Err())
+	default:
+	}
 
 	select {
 	case <-p.stopped: // to cover the case where while waiting to send (because the channel is filled), pool stops.
@@ -116,8 +119,7 @@ func (p *WorkerPool[T]) Stop(ctx context.Context) {
 
 func (p *WorkerPool[T]) close(ctx context.Context) {
 	p.logger.InfoContext(ctx, "worker pool shutting down")
-	p.stoppedBool.Store(true) // stop receiving.
-	close(p.stopped)          // stop receiving.
+	close(p.stopped) // stop receiving.
 	func() {
 		p.chRWMutex.Lock() // acquire write lock to close ch.
 		defer p.chRWMutex.Unlock()
