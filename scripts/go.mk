@@ -2,7 +2,7 @@ MODULE := $(shell cat go.mod | grep -e "^module" | sed "s/^module //")
 
 GO_PACKAGES = go list ./...
 GO_FOLDERS = go list -f '{{ .Dir }}' ./...
-GO_FILES = find . -type f -name '*.go' -not -path './vendor/*'
+GO_FILES = find . -type f -name '*.go'
 
 export GO111MODULE := on
 #export GOFLAGS := -mod=vendor
