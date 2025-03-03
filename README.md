@@ -42,6 +42,15 @@ This solution wraps a graceful shutdown process where it first stops accepting n
 ## Examples
 
 ```golang
+package main
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/ifnotnil/wpool"
+)
+
 func Callback(ctx context.Context, item string) {
 	slog.Default().Info("cb", slog.String("item", item))
 }
