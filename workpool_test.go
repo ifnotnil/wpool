@@ -2,6 +2,7 @@ package wpool
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -247,4 +248,61 @@ func BenchmarkWork(b *testing.B) {
 	b.ResetTimer()
 	subject.worker(ctx, 0)
 	b.StopTimer()
+}
+
+func BenchmarkFullFlow(b *testing.B) {
+	tests := []struct {
+		workers int
+		senders int
+	}{
+		{
+			workers: 10,
+			senders: 10,
+		},
+		{
+			workers: 20,
+			senders: 20,
+		},
+		{
+			workers: 10,
+			senders: 20,
+		},
+		{
+			workers: 10,
+			senders: 50,
+		},
+	}
+
+	for idx, tc := range tests {
+		b.Run(fmt.Sprintf("%d_w%d_s%d", idx, tc.workers, tc.senders), func(b *testing.B) {
+			ctx := context.Background()
+			cb := func(_ context.Context, i int) {}
+
+			subject := NewWorkerPool(cb, WithChannelBufferSize(10))
+
+			start := make(chan struct{})
+
+			wg := sync.WaitGroup{}
+			wg.Add(tc.senders)
+
+			for range tc.senders {
+				go mockSender(b, ctx, &wg, start, subject)
+			}
+			close(start)
+
+			subject.Start(ctx, tc.workers)
+
+			wg.Wait()
+			subject.Stop(ctx)
+		})
+	}
+}
+
+func mockSender(b *testing.B, ctx context.Context, wg *sync.WaitGroup, start chan struct{}, subject *WorkerPool[int]) {
+	defer wg.Done()
+	b.Helper()
+	<-start
+	for i := range b.N {
+		_ = subject.Submit(ctx, i)
+	}
 }
