@@ -31,6 +31,8 @@ go.work.sum
 
 # visual studio code local folder
 /.vscode/*
+!/.vscode/sample.settings.json
+!/.vscode/extensions.json
 
 
 /coverage.txt
