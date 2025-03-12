@@ -244,10 +244,7 @@ func BenchmarkWork(b *testing.B) {
 	close(subject.ch)
 
 	subject.workersWG.Add(1)
-	// b.ResetTimer()
-	// subject.worker(ctx, 0)
-	// b.StopTimer()
-	b.Run("worker fn", func(b *testing.B) {
-		subject.worker(ctx, 0)
-	})
+	b.ResetTimer()
+	subject.worker(ctx, 0)
+	b.StopTimer()
 }
