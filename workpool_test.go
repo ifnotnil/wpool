@@ -299,8 +299,8 @@ func BenchmarkFullFlow(b *testing.B) {
 }
 
 func mockSender(b *testing.B, ctx context.Context, wg *sync.WaitGroup, start chan struct{}, subject *WorkerPool[int]) {
-	defer wg.Done()
 	b.Helper()
+	defer wg.Done()
 	<-start
 	for i := range b.N {
 		_ = subject.Submit(ctx, i)
