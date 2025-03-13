@@ -252,33 +252,43 @@ func BenchmarkWork(b *testing.B) {
 
 func BenchmarkFullFlow(b *testing.B) {
 	tests := []struct {
-		workers int
-		senders int
+		workers           int
+		senders           int
+		channelBufferSize int
 	}{
 		{
-			workers: 10,
-			senders: 10,
+			workers:           10,
+			senders:           10,
+			channelBufferSize: 10,
 		},
 		{
-			workers: 20,
-			senders: 20,
+			workers:           20,
+			senders:           20,
+			channelBufferSize: 10,
 		},
 		{
-			workers: 10,
-			senders: 20,
+			workers:           10,
+			senders:           20,
+			channelBufferSize: 10,
 		},
 		{
-			workers: 10,
-			senders: 50,
+			workers:           10,
+			senders:           40,
+			channelBufferSize: 10,
+		},
+		{
+			workers:           10,
+			senders:           40,
+			channelBufferSize: 50,
 		},
 	}
 
 	for idx, tc := range tests {
-		b.Run(fmt.Sprintf("%d_w%d_s%d", idx, tc.workers, tc.senders), func(b *testing.B) {
+		b.Run(fmt.Sprintf("%d_w%d_s%d_b%d", idx, tc.workers, tc.senders, tc.channelBufferSize), func(b *testing.B) {
 			ctx := context.Background()
 			cb := func(_ context.Context, i int) {}
 
-			subject := NewWorkerPool(cb, WithChannelBufferSize(10))
+			subject := NewWorkerPool(cb, WithChannelBufferSize(tc.channelBufferSize))
 
 			start := make(chan struct{})
 
