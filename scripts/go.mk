@@ -30,3 +30,7 @@ test-n-read: test
 .PHONY: bench
 bench: # runs all benchmarks
 	go test -benchmem -run=^Benchmark$$ -mod=readonly -bench=. ./...
+
+.PHONY: ci-bench
+ci-bench: # runs all benchmarks
+	go test -benchtime=1s -count=7 -benchmem -run=^Benchmark$ -mod=readonly -bench=. ./...
