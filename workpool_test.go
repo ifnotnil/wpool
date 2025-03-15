@@ -20,6 +20,17 @@ func TestMain(m *testing.M) {
 }
 
 func TestWorkerPoolLifeCycle(t *testing.T) {
+	safeWait := func(initCTX context.Context, d time.Duration) func(context.Context, int) {
+		return func(ctx context.Context, _ int) {
+			tm := time.NewTicker(d)
+			select {
+			case <-tm.C:
+			case <-ctx.Done():
+			case <-initCTX.Done():
+			}
+		}
+	}
+
 	t.Run("noop", func(t *testing.T) {
 		ctx := context.Background()
 		cb := func(ctx context.Context, item int) {}
@@ -121,28 +132,34 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		ErrorIs(ErrWorkerPoolStopped)(t, err)
 	})
 
-	t.Run("close while sending", func(t *testing.T) {
+	t.Run("close while 20 senders submitting", func(t *testing.T) {
 		ctx := context.Background()
-		cb := func(_ context.Context, it int) {
-			time.Sleep(60 * time.Millisecond)
-		}
-		subject := NewWorkerPool(cb)
-		subject.Start(ctx, 10)
+		ctx2, ctx2Cancel := context.WithCancel(ctx)
+		cb := safeWait(ctx2, 30*time.Millisecond)
+		subject := NewWorkerPool(cb, WithChannelBufferSize(0))
+		subject.Start(ctx, 2)
 
+		failedSubmits := atomic.Int64{}
+		const senders = 20
 		wg := sync.WaitGroup{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range 100 {
-				err := subject.Submit(ctx, i)
-				if err != nil {
-					ErrorIs(ErrWorkerPoolStopped)(t, err)
+		wg.Add(senders)
+		for range senders {
+			go func() {
+				defer wg.Done()
+				for i := range 400 {
+					err := subject.Submit(ctx, i)
+					if err != nil {
+						ErrorIs(ErrWorkerPoolStopped)(t, err)
+						failedSubmits.Add(1)
+					}
 				}
-			}
-		}()
+			}()
+		}
 
+		ctx2Cancel()
 		subject.Stop(ctx)
 		wg.Wait()
+		require.Positive(t, failedSubmits.Load(), "at least one submit should fail")
 	})
 
 	t.Run("close with ctx cancel while sending", func(t *testing.T) {
