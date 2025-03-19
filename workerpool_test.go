@@ -33,8 +33,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 	t.Run("noop", func(t *testing.T) {
 		ctx := context.Background()
-		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(cb)
+		subject := NewWorkerPool(noop)
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
@@ -67,19 +66,24 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	})
 
 	t.Run("noop multiple stops", func(t *testing.T) {
+		const testSize = 10
 		ctx := context.Background()
-		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(cb)
+		subject := NewWorkerPool(noop)
 		subject.Start(ctx, 10)
-		subject.Stop(ctx)
-		subject.Stop(ctx)
-		subject.Stop(ctx)
+		var wg sync.WaitGroup
+		wg.Add(testSize)
+		for range testSize {
+			go func() {
+				defer wg.Done()
+				subject.Stop(ctx)
+			}()
+		}
+		wg.Wait()
 	})
 
 	t.Run("buffered channel", func(t *testing.T) {
 		ctx := context.Background()
-		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(cb, WithChannelBufferSize(10))
+		subject := NewWorkerPool(noop, WithChannelBufferSize(10))
 		err := subject.Submit(ctx, 1)
 		require.NoError(t, err)
 		err = subject.Submit(ctx, 2)
@@ -91,8 +95,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 	t.Run("submit fails because of ctx cancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
-		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(cb)
+		subject := NewWorkerPool(noop)
 
 		// don't start workers to block the submit.
 
@@ -107,8 +110,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 	t.Run("submit fails because pool closes", func(t *testing.T) {
 		ctx := context.Background()
-		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(cb)
+		subject := NewWorkerPool(noop)
 
 		// don't start workers to block the submit.
 		subject.Start(ctx, 0) // noop start
@@ -124,8 +126,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 	t.Run("send to closed pool", func(t *testing.T) {
 		ctx := context.Background()
-		cb := func(_ context.Context, _ int) {}
-		subject := NewWorkerPool(cb)
+		subject := NewWorkerPool(noop)
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 		err := subject.Submit(ctx, 1)
@@ -196,11 +197,56 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 	t.Run("noop with logs", func(t *testing.T) {
 		ctx := context.Background()
-		cb := func(ctx context.Context, item int) {}
-		subject := NewWorkerPool(cb, WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))))
+		subject := NewWorkerPool(noop, WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
+
+	t.Run("concurrent submits and close", func(t *testing.T) {
+		for _, testSize := range []int{1, 10, 100, 1000} {
+			t.Run(fmt.Sprintf("testSize=%d", testSize), func(t *testing.T) {
+				for _, bufferSize := range []int{0, 1, 10, 100} {
+					t.Run(fmt.Sprintf("buffer=%d", bufferSize), func(t *testing.T) {
+						testConcurrentSubmitsAndClose(t, testSize, bufferSize)
+					})
+				}
+			})
+		}
+	})
+}
+
+func testConcurrentSubmitsAndClose(t *testing.T, testSize, bufferSize int) {
+	t.Helper()
+	ctx := context.Background()
+	seenSum := atomic.Int64{}
+	subject := NewWorkerPool(
+		func(ctx context.Context, item int) {
+			seenSum.Add(int64(item))
+		},
+		WithChannelBufferSize(bufferSize),
+	)
+	subject.Start(ctx, 10)
+	sentSum := atomic.Int64{}
+	var wg sync.WaitGroup
+	wg.Add(testSize + 1)
+	for i := range testSize {
+		if i == testSize/10 {
+			go func() {
+				defer wg.Done()
+				subject.Stop(ctx)
+			}()
+		}
+
+		go func() {
+			defer wg.Done()
+			err := subject.Submit(ctx, i)
+			if err == nil {
+				sentSum.Add(int64(i))
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, sentSum.Load(), seenSum.Load())
 }
 
 func TestMultipleSenders(t *testing.T) {
@@ -235,11 +281,16 @@ func TestMultipleSenders(t *testing.T) {
 	assert.Equal(t, int64(senders*perSender), count.Load())
 }
 
+func BenchmarkNew(b *testing.B) {
+	for range b.N {
+		NewWorkerPool(noop)
+	}
+}
+
 func BenchmarkSubmit(b *testing.B) {
 	ctx := context.Background()
-	cb := func(_ context.Context, _ int) {}
 
-	subject := NewWorkerPool(cb, WithChannelBufferSize(b.N+1))
+	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
 
 	b.ResetTimer()
 	for i := range b.N {
@@ -250,11 +301,17 @@ func BenchmarkSubmit(b *testing.B) {
 	subject.Stop(ctx)
 }
 
+func BenchmarkStop(b *testing.B) {
+	ctx := context.Background()
+	for range b.N {
+		NewWorkerPool(noop).Stop(ctx)
+	}
+}
+
 func BenchmarkWork(b *testing.B) {
 	ctx := context.Background()
-	cb := func(_ context.Context, i int) {}
 
-	subject := NewWorkerPool(cb, WithChannelBufferSize(b.N+1))
+	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
 
 	for i := range b.N {
 		_ = subject.Submit(ctx, i)
@@ -303,9 +360,8 @@ func BenchmarkFullFlow(b *testing.B) {
 	for idx, tc := range tests {
 		b.Run(fmt.Sprintf("%d_w%d_s%d_b%d", idx, tc.workers, tc.senders, tc.channelBufferSize), func(b *testing.B) {
 			ctx := context.Background()
-			cb := func(_ context.Context, i int) {}
 
-			subject := NewWorkerPool(cb, WithChannelBufferSize(tc.channelBufferSize))
+			subject := NewWorkerPool(noop, WithChannelBufferSize(tc.channelBufferSize))
 
 			start := make(chan struct{})
 
@@ -324,6 +380,8 @@ func BenchmarkFullFlow(b *testing.B) {
 		})
 	}
 }
+
+func noop(context.Context, int) {}
 
 func mockSender(b *testing.B, ctx context.Context, wg *sync.WaitGroup, start chan struct{}, subject *WorkerPool[int]) {
 	b.Helper()
