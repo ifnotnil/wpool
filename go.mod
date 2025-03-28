@@ -1,6 +1,6 @@
 module github.com/ifnotnil/wpool
 
-go 1.22
+go 1.23
 
 // Test dependencies. They will not be pushed downstream as indirect ones.
 require (

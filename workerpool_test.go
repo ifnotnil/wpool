@@ -1,10 +1,10 @@
 package wpool
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -197,9 +197,11 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 
 	t.Run("noop with logs", func(t *testing.T) {
 		ctx := context.Background()
-		subject := NewWorkerPool(noop, WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))))
+		buf := bytes.Buffer{}
+		subject := NewWorkerPool(noop, WithLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
+		require.NotZero(t, buf.Len())
 	})
 
 	t.Run("concurrent submits and close", func(t *testing.T) {
