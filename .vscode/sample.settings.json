@@ -21,6 +21,9 @@
   // ~~Language Server~~ https://github.com/golang/tools/blob/master/gopls/doc/settings.md
   "go.useLanguageServer": true,
   "gopls": {
+    "build.standaloneTags": [
+      "tools"
+    ],
     "build.env": {
       "GO111MODULE": "on",
       "CGO_ENABLED": "0"
