@@ -1,11 +1,11 @@
-# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.v1.jsonschema.json
 
 # https://golangci-lint.run/usage/configuration/
 # https://golangci-lint.run/usage/linters/
 
 run:
   concurrency: 0
-  go: '1.22'
+  go: '1.23'
   timeout: 10m
   issues-exit-code: 1
   tests: true
