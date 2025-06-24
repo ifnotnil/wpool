@@ -322,7 +322,7 @@ func BenchmarkWork(b *testing.B) {
 
 	subject.workersWG.Add(1)
 	b.ResetTimer()
-	subject.worker(ctx, 0)
+	subject.workerDrain(ctx, 0)
 	b.StopTimer()
 }
 
