@@ -35,6 +35,7 @@ linters:
     - varnamelen
     - wrapcheck
     - wsl
+    - wsl_v5
   settings:
     govet:
       enable-all: true
