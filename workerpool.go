@@ -15,17 +15,6 @@ const (
 	ShutdownModeImmediate
 )
 
-func (s ShutdownMode) String() string {
-	switch s {
-	case ShutdownModeDrain:
-		return "Drain"
-	case ShutdownModeImmediate:
-		return "Immediate"
-	default:
-		return "unknown"
-	}
-}
-
 type config struct {
 	logger            *slog.Logger
 	channelBufferSize int
@@ -170,11 +159,7 @@ func (p *WorkerPool[T]) workerImmediate(ctx context.Context, id int) {
 
 	for {
 		select {
-		case item, open := <-p.ch:
-			if !open { // Channel has been closed.
-				p.logger.DebugContext(ctx, "worker channel was closed", slog.Int("worker_id", id))
-				return
-			}
+		case item := <-p.ch: // ch never closes in immediate mode
 			p.cb(ctx, item)
 
 		case <-p.stopWorkers:

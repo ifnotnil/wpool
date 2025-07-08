@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func (s ShutdownMode) String() string {
+	switch s {
+	case ShutdownModeDrain:
+		return "Drain"
+	case ShutdownModeImmediate:
+		return "Immediate"
+	default:
+		return "unknown"
+	}
+}
+
 func BenchmarkNew(b *testing.B) {
 	for range b.N {
 		NewWorkerPool(noop)

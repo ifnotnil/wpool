@@ -141,7 +141,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		ErrorStringContains("context canceled")(t, err)
 	})
 
-	t.Run("submit fails because of ctx cancellation intermediate", func(t *testing.T) {
+	t.Run("submit fails because of ctx cancellation - immediate", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
@@ -173,9 +173,34 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		ErrorIs(ErrWorkerPoolStopped)(t, err)
 	})
 
+	t.Run("submit fails because pool closes - immediate", func(t *testing.T) {
+		ctx := context.Background()
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
+
+		// don't start workers to block the submit.
+		subject.Start(ctx, 0) // noop start
+
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			subject.Stop(ctx)
+		}()
+
+		err := subject.Submit(ctx, 1)
+		ErrorIs(ErrWorkerPoolStopped)(t, err)
+	})
+
 	t.Run("send to closed pool", func(t *testing.T) {
 		ctx := context.Background()
 		subject := NewWorkerPool(noop)
+		subject.Start(ctx, 10)
+		subject.Stop(ctx)
+		err := subject.Submit(ctx, 1)
+		ErrorIs(ErrWorkerPoolStopped)(t, err)
+	})
+
+	t.Run("send to closed pool - immediate", func(t *testing.T) {
+		ctx := context.Background()
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 		err := subject.Submit(ctx, 1)
@@ -239,6 +264,15 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cb := func(_ context.Context, it int) { time.Sleep(60 * time.Millisecond) }
 		subject := NewWorkerPool(cb)
+		cancel()
+		err := subject.Submit(ctx, 1)
+		ErrorStringContains("worker pool item submission failed due to context cancellation")(t, err)
+	})
+
+	t.Run("close with ctx cancel before sending - immediate", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cb := func(_ context.Context, it int) { time.Sleep(60 * time.Millisecond) }
+		subject := NewWorkerPool(cb, WithShutdownMode(ShutdownModeImmediate))
 		cancel()
 		err := subject.Submit(ctx, 1)
 		ErrorStringContains("worker pool item submission failed due to context cancellation")(t, err)
