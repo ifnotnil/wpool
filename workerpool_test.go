@@ -95,7 +95,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 			count++
 			return true
 		})
-		require.Greater(t, count, 0)
+		require.Positive(t, count)
 	})
 
 	t.Run("noop multiple stops", func(t *testing.T) {
@@ -303,6 +303,7 @@ func testConcurrentSubmitsAndClose(t *testing.T, testSize, bufferSize int) {
 }
 
 func TestMultipleSendersWithMultipleSends(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	tests := []struct {
