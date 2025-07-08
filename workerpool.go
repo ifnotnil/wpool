@@ -15,6 +15,17 @@ const (
 	ShutdownModeImmediate
 )
 
+func (s ShutdownMode) String() string {
+	switch s {
+	case ShutdownModeDrain:
+		return "Drain"
+	case ShutdownModeImmediate:
+		return "Immediate"
+	default:
+		return "unknown"
+	}
+}
+
 type config struct {
 	logger            *slog.Logger
 	channelBufferSize int
@@ -74,11 +85,9 @@ func NewWorkerPool[T any](callback func(ctx context.Context, item T), opts ...fu
 
 func (p *WorkerPool[T]) Submit(ctx context.Context, item T) error {
 	switch p.shutdownMode {
-	case ShutdownModeDrain:
-		return p.submitWithLock(ctx, item)
 	case ShutdownModeImmediate:
 		return p.submitNoLock(ctx, item)
-	default:
+	default: // ShutdownModeDrain
 		return p.submitWithLock(ctx, item)
 	}
 }
@@ -97,6 +106,8 @@ func (p *WorkerPool[T]) submitWithLock(ctx context.Context, item T) error {
 	default:
 	}
 
+	// this code is duplicated here and in submitNoLock, because it seems it does not get inlined, due to select statement.
+	// Lets verify that and refactor if needed.
 	select {
 	case <-p.stopReceiving: // to cover the case where while waiting to send (because the channel is filled), pool stops.
 		return ErrWorkerPoolStopped
@@ -126,11 +137,9 @@ func (p *WorkerPool[T]) Start(ctx context.Context, numOfWorkers int) {
 	p.workersWG.Add(numOfWorkers)
 	for i := range numOfWorkers {
 		switch p.shutdownMode {
-		case ShutdownModeDrain:
-			go p.workerDrain(ctx, i)
 		case ShutdownModeImmediate:
 			go p.workerImmediate(ctx, i)
-		default:
+		default: // ShutdownModeDrain
 			go p.workerDrain(ctx, i)
 		}
 	}
@@ -185,11 +194,9 @@ var ErrWorkerPoolStopped = errors.New("worker pool is stopped")
 func (p *WorkerPool[T]) Stop(ctx context.Context) {
 	p.shutdownOnce.Do(func() {
 		switch p.shutdownMode {
-		case ShutdownModeDrain:
-			p.shutdownDrain(ctx)
 		case ShutdownModeImmediate:
 			p.shutdownImmediate(ctx)
-		default:
+		default: // ShutdownModeDrain
 			p.shutdownDrain(ctx)
 		}
 	})

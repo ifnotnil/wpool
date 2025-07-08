@@ -20,20 +20,16 @@ func TestMain(m *testing.M) {
 }
 
 func TestWorkerPoolLifeCycle(t *testing.T) {
-	safeWait := func(initCTX context.Context, d time.Duration) func(context.Context, int) {
-		return func(ctx context.Context, _ int) {
-			tm := time.NewTicker(d)
-			select {
-			case <-tm.C:
-			case <-ctx.Done():
-			case <-initCTX.Done():
-			}
-		}
-	}
-
 	t.Run("noop", func(t *testing.T) {
 		ctx := context.Background()
 		subject := NewWorkerPool(noop)
+		subject.Start(ctx, 10)
+		subject.Stop(ctx)
+	})
+
+	t.Run("noop - immediate", func(t *testing.T) {
+		ctx := context.Background()
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
@@ -63,6 +59,43 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 			t.Errorf("expected all keys to be deleted: %#v", key)
 			return true
 		})
+	})
+
+	t.Run("happy path send and read - immediate", func(t *testing.T) {
+		ctx := context.Background()
+
+		expected := sync.Map{}
+
+		// slow read
+		cb := func(ctx context.Context, item int) {
+			time.Sleep(10 * time.Millisecond)
+			expected.Delete(item)
+		}
+
+		subject := NewWorkerPool(cb, WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate))
+		subject.Start(ctx, 1)
+
+		// set expected sends
+		for i := range 100 {
+			expected.Store(i, nil)
+		}
+
+		// send
+		for i := range 100 {
+			err := subject.Submit(ctx, i)
+			require.NoError(t, err)
+		}
+
+		// stop
+		subject.Stop(ctx)
+
+		// expect at least some not processed due to immediate shutdown.
+		var count int
+		expected.Range(func(key, value any) bool {
+			count++
+			return true
+		})
+		require.Greater(t, count, 0)
 	})
 
 	t.Run("noop multiple stops", func(t *testing.T) {
@@ -96,6 +129,22 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		subject := NewWorkerPool(noop)
+
+		// don't start workers to block the submit.
+
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			cancel()
+		}()
+
+		err := subject.Submit(ctx, 1)
+		ErrorStringContains("context canceled")(t, err)
+	})
+
+	t.Run("submit fails because of ctx cancellation intermediate", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
 
 		// don't start workers to block the submit.
 
@@ -203,7 +252,9 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Stop(ctx)
 		require.NotZero(t, buf.Len())
 	})
+}
 
+func TestConcurrentSubmits(t *testing.T) {
 	t.Run("concurrent submits and close", func(t *testing.T) {
 		for _, testSize := range []int{1, 10, 100, 1000} {
 			t.Run(fmt.Sprintf("testSize=%d", testSize), func(t *testing.T) {
@@ -251,145 +302,61 @@ func testConcurrentSubmitsAndClose(t *testing.T, testSize, bufferSize int) {
 	assert.Equal(t, sentSum.Load(), seenSum.Load())
 }
 
-func TestMultipleSenders(t *testing.T) {
+func TestMultipleSendersWithMultipleSends(t *testing.T) {
 	ctx := context.Background()
 
-	const senders = 40
-	const perSender = 4000
-	count := &atomic.Int64{}
-
-	cb := func(_ context.Context, _ int) { count.Add(1) }
-	subject := NewWorkerPool(cb, WithChannelBufferSize(3))
-	subject.Start(ctx, 5)
-
-	wg := sync.WaitGroup{}
-	wg.Add(senders)
-	startSignal := make(chan struct{})
-	for range senders {
-		go func() {
-			defer wg.Done()
-			<-startSignal
-			for i := range perSender {
-				err := subject.Submit(ctx, i)
-				assert.NoError(t, err)
-			}
-		}()
-	}
-	close(startSignal)
-	wg.Wait()
-
-	subject.Stop(ctx)
-
-	assert.Equal(t, int64(senders*perSender), count.Load())
-}
-
-func BenchmarkNew(b *testing.B) {
-	for range b.N {
-		NewWorkerPool(noop)
-	}
-}
-
-func BenchmarkSubmit(b *testing.B) {
-	ctx := context.Background()
-
-	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
-
-	b.ResetTimer()
-	for i := range b.N {
-		_ = subject.Submit(ctx, i)
-	}
-	b.StopTimer()
-
-	subject.Stop(ctx)
-}
-
-func BenchmarkStop(b *testing.B) {
-	ctx := context.Background()
-	for range b.N {
-		NewWorkerPool(noop).Stop(ctx)
-	}
-}
-
-func BenchmarkWork(b *testing.B) {
-	ctx := context.Background()
-
-	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
-
-	for i := range b.N {
-		_ = subject.Submit(ctx, i)
-	}
-	close(subject.ch)
-
-	subject.workersWG.Add(1)
-	b.ResetTimer()
-	subject.workerDrain(ctx, 0)
-	b.StopTimer()
-}
-
-func BenchmarkFullFlow(b *testing.B) {
 	tests := []struct {
-		workers           int
-		senders           int
-		channelBufferSize int
+		senders        int
+		sendsPerSender int
 	}{
-		{
-			workers:           10,
-			senders:           10,
-			channelBufferSize: 10,
-		},
-		{
-			workers:           20,
-			senders:           20,
-			channelBufferSize: 10,
-		},
-		{
-			workers:           10,
-			senders:           20,
-			channelBufferSize: 10,
-		},
-		{
-			workers:           10,
-			senders:           40,
-			channelBufferSize: 10,
-		},
-		{
-			workers:           10,
-			senders:           40,
-			channelBufferSize: 50,
-		},
+		{senders: 10, sendsPerSender: 40_000},
+		{senders: 10, sendsPerSender: 80_000},
+		{senders: 40, sendsPerSender: 40_000},
 	}
 
-	for idx, tc := range tests {
-		b.Run(fmt.Sprintf("%d_w%d_s%d_b%d", idx, tc.workers, tc.senders, tc.channelBufferSize), func(b *testing.B) {
-			ctx := context.Background()
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("senders=%d sends=%d", tc.senders, tc.sendsPerSender), func(t *testing.T) {
+			t.Parallel()
+			count := &atomic.Int64{}
 
-			subject := NewWorkerPool(noop, WithChannelBufferSize(tc.channelBufferSize))
-
-			start := make(chan struct{})
+			cb := func(_ context.Context, _ int) { count.Add(1) }
+			subject := NewWorkerPool(cb, WithChannelBufferSize(3))
+			subject.Start(ctx, 5)
 
 			wg := sync.WaitGroup{}
 			wg.Add(tc.senders)
-
+			startSignal := make(chan struct{})
 			for range tc.senders {
-				go mockSender(b, ctx, &wg, start, subject)
+				go func() {
+					defer wg.Done()
+					<-startSignal
+					for i := range tc.sendsPerSender {
+						err := subject.Submit(ctx, i)
+						assert.NoError(t, err)
+					}
+				}()
 			}
-			close(start)
-
-			subject.Start(ctx, tc.workers)
-
+			close(startSignal)
 			wg.Wait()
+
 			subject.Stop(ctx)
+
+			assert.Equal(t, int64(tc.senders*tc.sendsPerSender), count.Load())
 		})
 	}
 }
 
+// helper functions
+
 func noop(context.Context, int) {}
 
-func mockSender(b *testing.B, ctx context.Context, wg *sync.WaitGroup, start chan struct{}, subject *WorkerPool[int]) {
-	b.Helper()
-	defer wg.Done()
-	<-start
-	for i := range b.N {
-		_ = subject.Submit(ctx, i)
+var safeWait = func(initCTX context.Context, d time.Duration) func(context.Context, int) {
+	return func(ctx context.Context, _ int) {
+		tm := time.NewTicker(d)
+		select {
+		case <-tm.C:
+		case <-ctx.Done():
+		case <-initCTX.Done():
+		}
 	}
 }
