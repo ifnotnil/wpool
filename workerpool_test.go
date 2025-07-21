@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -336,48 +337,198 @@ func testConcurrentSubmitsAndClose(t *testing.T, testSize, bufferSize int) {
 	assert.Equal(t, sentSum.Load(), seenSum.Load())
 }
 
-func TestMultipleSendersWithMultipleSends(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
+type WorkerPoolTestCaseMidFlight struct {
+	enabled     bool
+	onSenderID  int
+	onSendCount int
+	fn          func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int])
+}
 
-	tests := []struct {
-		senders        int
-		sendsPerSender int
-	}{
-		{senders: 10, sendsPerSender: 40_000},
-		{senders: 10, sendsPerSender: 80_000},
-		{senders: 40, sendsPerSender: 40_000},
+type WorkerPoolTestCase struct {
+	opts                []func(*config)
+	callback            func(ctx context.Context, item int)
+	workers             int
+	senders             int
+	sendsPerSender      int // < 0 means infinite sends
+	stop                bool
+	midFlight           WorkerPoolTestCaseMidFlight
+	assertErrorOnSubmit func(t *testing.T, err error)
+	asserts             func(t *testing.T, itemsSent uint64, itemsProcessed uint64)
+}
+
+func (tc WorkerPoolTestCase) Test(t *testing.T) {
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
+
+	countSent := &atomic.Uint64{}
+	countProcessed := &atomic.Uint64{}
+
+	cb := func(ctx context.Context, i int) {
+		countProcessed.Add(1)
+		tc.callback(ctx, i)
 	}
 
-	for _, tc := range tests {
-		t.Run(fmt.Sprintf("senders=%d sends=%d", tc.senders, tc.sendsPerSender), func(t *testing.T) {
-			t.Parallel()
-			count := &atomic.Int64{}
+	subject := NewWorkerPool(cb, tc.opts...)
+	subject.Start(ctx, tc.workers)
 
-			cb := func(_ context.Context, _ int) { count.Add(1) }
-			subject := NewWorkerPool(cb, WithChannelBufferSize(3))
-			subject.Start(ctx, 5)
+	sendersWG := sync.WaitGroup{}
+	sendersWG.Add(tc.senders)
+	startSignal := make(chan struct{})
+	for sid := range tc.senders {
+		go func(senderID int) {
+			defer sendersWG.Done()
+			<-startSignal
+			for i := range intIter(tc.sendsPerSender) {
+				err := subject.Submit(ctx, i)
+				if tc.assertErrorOnSubmit != nil {
+					tc.assertErrorOnSubmit(t, err)
+				}
+				if err != nil {
+					break
+				}
 
-			wg := sync.WaitGroup{}
-			wg.Add(tc.senders)
-			startSignal := make(chan struct{})
-			for range tc.senders {
-				go func() {
-					defer wg.Done()
-					<-startSignal
-					for i := range tc.sendsPerSender {
-						err := subject.Submit(ctx, i)
-						assert.NoError(t, err)
-					}
-				}()
+				countSent.Add(1)
+
+				if tc.midFlight.enabled &&
+					tc.midFlight.fn != nil &&
+					tc.midFlight.onSenderID == senderID &&
+					tc.midFlight.onSendCount == i {
+					tc.midFlight.fn(ctx, ctxCancel, subject)
+				}
 			}
-			close(startSignal)
-			wg.Wait()
+		}(sid)
+	}
+	close(startSignal)
+	sendersWG.Wait()
 
-			subject.Stop(ctx)
+	if tc.stop {
+		subject.Stop(ctx)
+	}
 
-			assert.Equal(t, int64(tc.senders*tc.sendsPerSender), count.Load())
-		})
+	if tc.asserts != nil {
+		tc.asserts(t, countSent.Load(), countProcessed.Load())
+	}
+}
+
+//nolint:thelper
+func TestFlow(t *testing.T) {
+	tests := map[string]WorkerPoolTestCase{
+		"1 worker 1 sender 100": {
+			opts:           []func(*config){},
+			callback:       noop,
+			workers:        1,
+			senders:        1,
+			sendsPerSender: 100,
+			stop:           true,
+			midFlight:      WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(100), itemsSent)
+				assert.Equal(t, uint64(100), itemsProcessed)
+			},
+		},
+		"5 workers 10 sender 40k": {
+			opts:           []func(*config){},
+			callback:       noop,
+			workers:        5,
+			senders:        10,
+			sendsPerSender: 40_000,
+			stop:           true,
+			midFlight:      WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(10*40_000), itemsSent)
+				assert.Equal(t, uint64(10*40_000), itemsProcessed)
+			},
+		},
+		"5 workers 10 sender 80k": {
+			opts:           []func(*config){},
+			callback:       noop,
+			workers:        5,
+			senders:        10,
+			sendsPerSender: 80_000,
+			stop:           true,
+			midFlight:      WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(10*80_000), itemsSent)
+				assert.Equal(t, uint64(10*80_000), itemsProcessed)
+			},
+		},
+		"5 workers 40 sender 40k": {
+			opts:           []func(*config){},
+			callback:       noop,
+			workers:        5,
+			senders:        40,
+			sendsPerSender: 40_000,
+			stop:           true,
+			midFlight:      WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(40*40_000), itemsSent)
+				assert.Equal(t, uint64(40*40_000), itemsProcessed)
+			},
+		},
+		"5 workers 5 sender": {
+			opts:           []func(*config){WithChannelBufferSize(100)},
+			callback:       noop,
+			workers:        5,
+			senders:        5,
+			sendsPerSender: -1,
+			stop:           false,
+			midFlight: WorkerPoolTestCaseMidFlight{
+				enabled:     true,
+				onSenderID:  2,
+				onSendCount: 15000,
+				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
+					subject.Stop(ctx)
+				},
+			},
+			assertErrorOnSubmit: func(t *testing.T, err error) {
+				if err != nil {
+					require.ErrorIs(t, err, ErrWorkerPoolStopped)
+				}
+			},
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, itemsSent, itemsProcessed)
+			},
+		},
+		"5 workers 5 sender ShutdownModeImmediate": {
+			opts:           []func(*config){WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate)},
+			callback:       noop,
+			workers:        5,
+			senders:        5,
+			sendsPerSender: -1,
+			stop:           false,
+			midFlight: WorkerPoolTestCaseMidFlight{
+				enabled:     true,
+				onSenderID:  2,
+				onSendCount: 15000,
+				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
+					subject.Stop(ctx)
+				},
+			},
+			assertErrorOnSubmit: func(t *testing.T, err error) {
+				if err != nil {
+					require.ErrorIs(t, err, ErrWorkerPoolStopped)
+				}
+			},
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Less(t, itemsProcessed, itemsSent)
+			},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, tc.Test)
 	}
 }
 
@@ -392,6 +543,24 @@ var safeWait = func(initCTX context.Context, d time.Duration) func(context.Conte
 		case <-tm.C:
 		case <-ctx.Done():
 		case <-initCTX.Done():
+		}
+	}
+}
+
+func intIter(end int) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		if end > 0 {
+			for i := range end {
+				if !yield(i) {
+					return
+				}
+			}
+		} else {
+			for i := 0; ; i++ {
+				if !yield(i) {
+					return
+				}
+			}
 		}
 	}
 }
