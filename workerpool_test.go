@@ -4,36 +4,43 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ifnotnil/x/tst"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
+
+func ifExistsIs(targetErr ...error) tst.ErrorAssertionFunc {
+	return func(t tst.TestingT, err error) bool {
+		if err == nil {
+			return true
+		}
+		return tst.ErrorIs(targetErr...)(t, err)
+	}
+}
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
 func TestWorkerPoolLifeCycle(t *testing.T) {
-	safeWait := func(initCTX context.Context, d time.Duration) func(context.Context, int) {
-		return func(ctx context.Context, _ int) {
-			tm := time.NewTicker(d)
-			select {
-			case <-tm.C:
-			case <-ctx.Done():
-			case <-initCTX.Done():
-			}
-		}
-	}
-
 	t.Run("noop", func(t *testing.T) {
 		ctx := context.Background()
 		subject := NewWorkerPool(noop)
+		subject.Start(ctx, 10)
+		subject.Stop(ctx)
+	})
+
+	t.Run("noop - immediate", func(t *testing.T) {
+		ctx := context.Background()
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 	})
@@ -63,6 +70,43 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 			t.Errorf("expected all keys to be deleted: %#v", key)
 			return true
 		})
+	})
+
+	t.Run("happy path send and read - immediate", func(t *testing.T) {
+		ctx := context.Background()
+
+		expected := sync.Map{}
+
+		// slow read
+		cb := func(ctx context.Context, item int) {
+			time.Sleep(10 * time.Millisecond)
+			expected.Delete(item)
+		}
+
+		subject := NewWorkerPool(cb, WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate))
+		subject.Start(ctx, 1)
+
+		// set expected sends
+		for i := range 100 {
+			expected.Store(i, nil)
+		}
+
+		// send
+		for i := range 100 {
+			err := subject.Submit(ctx, i)
+			require.NoError(t, err)
+		}
+
+		// stop
+		subject.Stop(ctx)
+
+		// expect at least some not processed due to immediate shutdown.
+		var count int
+		expected.Range(func(key, value any) bool {
+			count++
+			return true
+		})
+		require.Positive(t, count)
 	})
 
 	t.Run("noop multiple stops", func(t *testing.T) {
@@ -105,7 +149,23 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		}()
 
 		err := subject.Submit(ctx, 1)
-		ErrorStringContains("context canceled")(t, err)
+		require.ErrorContains(t, err, "context canceled")
+	})
+
+	t.Run("submit fails because of ctx cancellation - immediate", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
+
+		// don't start workers to block the submit.
+
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			cancel()
+		}()
+
+		err := subject.Submit(ctx, 1)
+		require.ErrorContains(t, err, "context canceled")
 	})
 
 	t.Run("submit fails because pool closes", func(t *testing.T) {
@@ -121,7 +181,23 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		}()
 
 		err := subject.Submit(ctx, 1)
-		ErrorIs(ErrWorkerPoolStopped)(t, err)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
+	})
+
+	t.Run("submit fails because pool closes - immediate", func(t *testing.T) {
+		ctx := context.Background()
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
+
+		// don't start workers to block the submit.
+		subject.Start(ctx, 0) // noop start
+
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			subject.Stop(ctx)
+		}()
+
+		err := subject.Submit(ctx, 1)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
 	})
 
 	t.Run("send to closed pool", func(t *testing.T) {
@@ -130,7 +206,16 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 		err := subject.Submit(ctx, 1)
-		ErrorIs(ErrWorkerPoolStopped)(t, err)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
+	})
+
+	t.Run("send to closed pool - immediate", func(t *testing.T) {
+		ctx := context.Background()
+		subject := NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate))
+		subject.Start(ctx, 10)
+		subject.Stop(ctx)
+		err := subject.Submit(ctx, 1)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
 	})
 
 	t.Run("close while 20 senders submitting", func(t *testing.T) {
@@ -150,7 +235,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 				for i := range 400 {
 					err := subject.Submit(ctx, i)
 					if err != nil {
-						ErrorIs(ErrWorkerPoolStopped)(t, err)
+						assert.ErrorIs(t, err, ErrWorkerPoolStopped)
 						failedSubmits.Add(1)
 					}
 				}
@@ -176,7 +261,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 			for i := range 100 {
 				err := subject.Submit(ctx, i)
 				if err != nil {
-					ErrorIs(ErrWorkerPoolStopped)(t, err)
+					assert.ErrorIs(t, err, ErrWorkerPoolStopped)
 				}
 			}
 		}(context.Background())
@@ -192,7 +277,16 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject := NewWorkerPool(cb)
 		cancel()
 		err := subject.Submit(ctx, 1)
-		ErrorStringContains("worker pool item submission failed due to context cancellation")(t, err)
+		require.ErrorContains(t, err, "worker pool item submission failed due to context cancellation")
+	})
+
+	t.Run("close with ctx cancel before sending - immediate", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cb := func(_ context.Context, it int) { time.Sleep(60 * time.Millisecond) }
+		subject := NewWorkerPool(cb, WithShutdownMode(ShutdownModeImmediate))
+		cancel()
+		err := subject.Submit(ctx, 1)
+		require.ErrorContains(t, err, "worker pool item submission failed due to context cancellation")
 	})
 
 	t.Run("noop with logs", func(t *testing.T) {
@@ -203,7 +297,9 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Stop(ctx)
 		require.NotZero(t, buf.Len())
 	})
+}
 
+func TestConcurrentSubmits(t *testing.T) {
 	t.Run("concurrent submits and close", func(t *testing.T) {
 		for _, testSize := range []int{1, 10, 100, 1000} {
 			t.Run(fmt.Sprintf("testSize=%d", testSize), func(t *testing.T) {
@@ -251,145 +347,214 @@ func testConcurrentSubmitsAndClose(t *testing.T, testSize, bufferSize int) {
 	assert.Equal(t, sentSum.Load(), seenSum.Load())
 }
 
-func TestMultipleSenders(t *testing.T) {
-	ctx := context.Background()
+type WorkerPoolTestCaseMidFlight struct {
+	enabled     bool
+	onSenderID  int
+	onSendCount int
+	fn          func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int])
+}
 
-	const senders = 40
-	const perSender = 4000
-	count := &atomic.Int64{}
+type WorkerPoolTestCase struct {
+	opts                []func(*config)
+	callback            func(ctx context.Context, item int)
+	workers             int
+	senders             int
+	sendsPerSender      int // < 0 means infinite sends
+	stop                bool
+	midFlight           WorkerPoolTestCaseMidFlight
+	assertErrorOnSubmit tst.ErrorAssertionFunc
+	asserts             func(t *testing.T, itemsSent uint64, itemsProcessed uint64)
+}
 
-	cb := func(_ context.Context, _ int) { count.Add(1) }
-	subject := NewWorkerPool(cb, WithChannelBufferSize(3))
-	subject.Start(ctx, 5)
+func (tc WorkerPoolTestCase) Test(t *testing.T) {
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
 
-	wg := sync.WaitGroup{}
-	wg.Add(senders)
+	countSent := &atomic.Uint64{}
+	countProcessed := &atomic.Uint64{}
+
+	cb := func(ctx context.Context, i int) {
+		countProcessed.Add(1)
+		tc.callback(ctx, i)
+	}
+
+	subject := NewWorkerPool(cb, tc.opts...)
+	subject.Start(ctx, tc.workers)
+
+	sendersWG := sync.WaitGroup{}
+	sendersWG.Add(tc.senders)
 	startSignal := make(chan struct{})
-	for range senders {
-		go func() {
-			defer wg.Done()
+	for sid := range tc.senders {
+		go func(senderID int) {
+			defer sendersWG.Done()
 			<-startSignal
-			for i := range perSender {
+			for i := range intIter(tc.sendsPerSender) {
 				err := subject.Submit(ctx, i)
-				assert.NoError(t, err)
+				if tc.assertErrorOnSubmit != nil {
+					tc.assertErrorOnSubmit(t, err)
+				}
+				if err != nil {
+					break
+				}
+
+				countSent.Add(1)
+
+				if tc.midFlight.enabled &&
+					tc.midFlight.fn != nil &&
+					tc.midFlight.onSenderID == senderID &&
+					tc.midFlight.onSendCount == i {
+					tc.midFlight.fn(ctx, ctxCancel, subject)
+				}
 			}
-		}()
+		}(sid)
 	}
 	close(startSignal)
-	wg.Wait()
+	sendersWG.Wait()
 
-	subject.Stop(ctx)
+	if tc.stop {
+		subject.Stop(ctx)
+	}
 
-	assert.Equal(t, int64(senders*perSender), count.Load())
-}
-
-func BenchmarkNew(b *testing.B) {
-	for range b.N {
-		NewWorkerPool(noop)
+	if tc.asserts != nil {
+		tc.asserts(t, countSent.Load(), countProcessed.Load())
 	}
 }
 
-func BenchmarkSubmit(b *testing.B) {
-	ctx := context.Background()
-
-	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
-
-	b.ResetTimer()
-	for i := range b.N {
-		_ = subject.Submit(ctx, i)
-	}
-	b.StopTimer()
-
-	subject.Stop(ctx)
-}
-
-func BenchmarkStop(b *testing.B) {
-	ctx := context.Background()
-	for range b.N {
-		NewWorkerPool(noop).Stop(ctx)
-	}
-}
-
-func BenchmarkWork(b *testing.B) {
-	ctx := context.Background()
-
-	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
-
-	for i := range b.N {
-		_ = subject.Submit(ctx, i)
-	}
-	close(subject.ch)
-
-	subject.workersWG.Add(1)
-	b.ResetTimer()
-	subject.worker(ctx, 0)
-	b.StopTimer()
-}
-
-func BenchmarkFullFlow(b *testing.B) {
-	tests := []struct {
-		workers           int
-		senders           int
-		channelBufferSize int
-	}{
-		{
-			workers:           10,
-			senders:           10,
-			channelBufferSize: 10,
+//nolint:thelper
+func TestFlow(t *testing.T) {
+	tests := map[string]WorkerPoolTestCase{
+		"1 worker 1 sender 100": {
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             1,
+			senders:             1,
+			sendsPerSender:      100,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(100), itemsSent)
+				assert.Equal(t, uint64(100), itemsProcessed)
+			},
 		},
-		{
-			workers:           20,
-			senders:           20,
-			channelBufferSize: 10,
+		"5 workers 10 sender 40k": {
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             5,
+			senders:             10,
+			sendsPerSender:      40_000,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(10*40_000), itemsSent)
+				assert.Equal(t, uint64(10*40_000), itemsProcessed)
+			},
 		},
-		{
-			workers:           10,
-			senders:           20,
-			channelBufferSize: 10,
+		"5 workers 10 sender 80k": {
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             5,
+			senders:             10,
+			sendsPerSender:      80_000,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(10*80_000), itemsSent)
+				assert.Equal(t, uint64(10*80_000), itemsProcessed)
+			},
 		},
-		{
-			workers:           10,
-			senders:           40,
-			channelBufferSize: 10,
+		"5 workers 40 sender 40k": {
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             5,
+			senders:             40,
+			sendsPerSender:      40_000,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, uint64(40*40_000), itemsSent)
+				assert.Equal(t, uint64(40*40_000), itemsProcessed)
+			},
 		},
-		{
-			workers:           10,
-			senders:           40,
-			channelBufferSize: 50,
+		"5 workers 5 sender": {
+			opts:           []func(*config){WithChannelBufferSize(100)},
+			callback:       noop,
+			workers:        5,
+			senders:        5,
+			sendsPerSender: -1,
+			stop:           false,
+			midFlight: WorkerPoolTestCaseMidFlight{
+				enabled:     true,
+				onSenderID:  2,
+				onSendCount: 15000,
+				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
+					subject.Stop(ctx)
+				},
+			},
+			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Equal(t, itemsSent, itemsProcessed)
+			},
+		},
+		"5 workers 5 sender ShutdownModeImmediate": {
+			opts:           []func(*config){WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate)},
+			callback:       noop,
+			workers:        5,
+			senders:        5,
+			sendsPerSender: -1,
+			stop:           false,
+			midFlight: WorkerPoolTestCaseMidFlight{
+				enabled:     true,
+				onSenderID:  2,
+				onSendCount: 15000,
+				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
+					subject.Stop(ctx)
+				},
+			},
+			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Less(t, itemsProcessed, itemsSent)
+			},
 		},
 	}
 
-	for idx, tc := range tests {
-		b.Run(fmt.Sprintf("%d_w%d_s%d_b%d", idx, tc.workers, tc.senders, tc.channelBufferSize), func(b *testing.B) {
-			ctx := context.Background()
-
-			subject := NewWorkerPool(noop, WithChannelBufferSize(tc.channelBufferSize))
-
-			start := make(chan struct{})
-
-			wg := sync.WaitGroup{}
-			wg.Add(tc.senders)
-
-			for range tc.senders {
-				go mockSender(b, ctx, &wg, start, subject)
-			}
-			close(start)
-
-			subject.Start(ctx, tc.workers)
-
-			wg.Wait()
-			subject.Stop(ctx)
-		})
+	for name, tc := range tests {
+		t.Run(name, tc.Test)
 	}
 }
+
+// helper functions
 
 func noop(context.Context, int) {}
 
-func mockSender(b *testing.B, ctx context.Context, wg *sync.WaitGroup, start chan struct{}, subject *WorkerPool[int]) {
-	b.Helper()
-	defer wg.Done()
-	<-start
-	for i := range b.N {
-		_ = subject.Submit(ctx, i)
+var safeWait = func(initCTX context.Context, d time.Duration) func(context.Context, int) {
+	return func(ctx context.Context, _ int) {
+		tm := time.NewTicker(d)
+		select {
+		case <-tm.C:
+		case <-ctx.Done():
+		case <-initCTX.Done():
+		}
+	}
+}
+
+func intIter(end int) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		if end > 0 {
+			for i := range end {
+				if !yield(i) {
+					return
+				}
+			}
+		} else {
+			for i := 0; ; i++ {
+				if !yield(i) {
+					return
+				}
+			}
+		}
 	}
 }
