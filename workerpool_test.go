@@ -3,6 +3,7 @@ package wpool
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -17,12 +18,41 @@ import (
 	"go.uber.org/goleak"
 )
 
-func ifExistsIs(targetErr ...error) tst.ErrorAssertionFunc {
+func optionalErrorIs(targetErr ...error) tst.ErrorAssertionFunc {
 	return func(t tst.TestingT, err error) bool {
+		if h, ok := t.(interface{ Helper() }); ok {
+			h.Helper()
+		}
+
 		if err == nil {
 			return true
 		}
 		return tst.ErrorIs(targetErr...)(t, err)
+	}
+}
+
+func optionalErrorOneOf(targetErr ...error) tst.ErrorAssertionFunc {
+	return func(t tst.TestingT, err error) bool {
+		if h, ok := t.(interface{ Helper() }); ok {
+			h.Helper()
+		}
+
+		if err == nil {
+			return true
+		}
+
+		is := false
+		for _, e := range targetErr {
+			if errors.Is(err, e) {
+				is = true
+			}
+		}
+
+		if !is {
+			tst.ErrorIs(targetErr...)(t, err)
+		}
+
+		return is
 	}
 }
 
@@ -388,7 +418,7 @@ func (tc WorkerPoolTestCase) Test(t *testing.T) {
 			defer sendersWG.Done()
 			<-startSignal
 			for i := range intIter(tc.sendsPerSender) {
-				err := subject.Submit(ctx, i)
+				err := subject.Submit(context.Background(), i) //nolint:contextcheck // we want to emulate that submit uses a different context than the workers
 				if tc.assertErrorOnSubmit != nil {
 					tc.assertErrorOnSubmit(t, err)
 				}
@@ -491,7 +521,7 @@ func TestFlow(t *testing.T) {
 					subject.Stop(ctx)
 				},
 			},
-			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
+			assertErrorOnSubmit: optionalErrorIs(ErrWorkerPoolStopped),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Equal(t, itemsSent, itemsProcessed)
 			},
@@ -510,7 +540,7 @@ func TestFlow(t *testing.T) {
 					subject.Stop(ctx)
 				},
 			},
-			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
+			assertErrorOnSubmit: optionalErrorIs(ErrWorkerPoolStopped),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Less(t, itemsProcessed, itemsSent)
 			},
@@ -529,7 +559,7 @@ func TestFlow(t *testing.T) {
 					ctxCancelFn()
 				},
 			},
-			assertErrorOnSubmit: ifExistsIs(context.Canceled),
+			assertErrorOnSubmit: optionalErrorOneOf(ErrWorkerPoolStopped, context.Canceled),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Less(t, itemsProcessed, itemsSent)
 			},
