@@ -39,6 +39,32 @@ But in some cases (let's say an application-wide event queue), we might want dif
 
 This solution wraps a graceful shutdown process where it first stops accepting new submissions, meaning that any attempt for submission after that point will result in returning an error. Then, closes the main channel and waits for all workers to finish processing all items already submitted to the channel (in case of buffered channel) or finish mid-flight processing. After all the workers are done and return, the stop function unblocks and finishes.
 
+## Shutdown Modes
+
+The worker pool supports two shutdown modes that control how the pool behaves during shutdown:
+
+### ShutdownModeDrain (Default)
+- Uses read-write mutex locking to ensure thread safety during shutdown
+- Waits for all queued items to be processed before shutting down
+- Guarantees that all submitted items are processed
+- Provides the most graceful shutdown experience
+
+### ShutdownModeImmediate
+- Uses lock-free operations for better performance
+- Workers stop immediately when the shutdown is initiated
+- May not process all queued items if shutdown occurs
+- Faster shutdown but potentially loses pending work
+
+You can configure the shutdown mode using the `WithShutdownMode` option:
+
+```golang
+// Use drain mode (default)
+p := wpool.NewWorkerPool(callback, wpool.WithShutdownMode(wpool.ShutdownModeDrain))
+
+// Use immediate mode
+p := wpool.NewWorkerPool(callback, wpool.WithShutdownMode(wpool.ShutdownModeImmediate))
+```
+
 ## Examples
 
 ```golang

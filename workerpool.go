@@ -8,10 +8,18 @@ import (
 	"sync"
 )
 
+// ShutdownMode defines how the worker pool behaves during shutdown
 type ShutdownMode int
 
 const (
+	// ShutdownModeDrain waits for all queued items to be processed before shutting down.
+	// Uses read-write mutex locking to ensure thread safety during shutdown.
+	// This is the default mode and provides the most graceful shutdown experience.
 	ShutdownModeDrain ShutdownMode = iota
+
+	// ShutdownModeImmediate stops workers immediately when shutdown is initiated.
+	// Uses lock-free operations for better performance but may not process all queued items.
+	// Provides faster shutdown but potentially loses pending work.
 	ShutdownModeImmediate
 )
 
