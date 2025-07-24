@@ -1,6 +1,6 @@
 module github.com/ifnotnil/wpool
 
-go 1.23
+go 1.23.0
 
 // Test dependencies. They will not be pushed downstream as indirect ones.
 require (
@@ -10,6 +10,7 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/ifnotnil/x/tst v0.0.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

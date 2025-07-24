@@ -11,10 +11,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ifnotnil/x/tst"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
+
+func ifExistsIs(targetErr ...error) tst.ErrorAssertionFunc {
+	return func(t tst.TestingT, err error) bool {
+		if err == nil {
+			return true
+		}
+		return tst.ErrorIs(targetErr...)(t, err)
+	}
+}
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
@@ -139,7 +149,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		}()
 
 		err := subject.Submit(ctx, 1)
-		ErrorStringContains("context canceled")(t, err)
+		require.ErrorContains(t, err, "context canceled")
 	})
 
 	t.Run("submit fails because of ctx cancellation - immediate", func(t *testing.T) {
@@ -155,7 +165,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		}()
 
 		err := subject.Submit(ctx, 1)
-		ErrorStringContains("context canceled")(t, err)
+		require.ErrorContains(t, err, "context canceled")
 	})
 
 	t.Run("submit fails because pool closes", func(t *testing.T) {
@@ -171,7 +181,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		}()
 
 		err := subject.Submit(ctx, 1)
-		ErrorIs(ErrWorkerPoolStopped)(t, err)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
 	})
 
 	t.Run("submit fails because pool closes - immediate", func(t *testing.T) {
@@ -187,7 +197,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		}()
 
 		err := subject.Submit(ctx, 1)
-		ErrorIs(ErrWorkerPoolStopped)(t, err)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
 	})
 
 	t.Run("send to closed pool", func(t *testing.T) {
@@ -196,7 +206,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 		err := subject.Submit(ctx, 1)
-		ErrorIs(ErrWorkerPoolStopped)(t, err)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
 	})
 
 	t.Run("send to closed pool - immediate", func(t *testing.T) {
@@ -205,7 +215,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject.Start(ctx, 10)
 		subject.Stop(ctx)
 		err := subject.Submit(ctx, 1)
-		ErrorIs(ErrWorkerPoolStopped)(t, err)
+		require.ErrorIs(t, err, ErrWorkerPoolStopped)
 	})
 
 	t.Run("close while 20 senders submitting", func(t *testing.T) {
@@ -225,7 +235,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 				for i := range 400 {
 					err := subject.Submit(ctx, i)
 					if err != nil {
-						ErrorIs(ErrWorkerPoolStopped)(t, err)
+						assert.ErrorIs(t, err, ErrWorkerPoolStopped)
 						failedSubmits.Add(1)
 					}
 				}
@@ -251,7 +261,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 			for i := range 100 {
 				err := subject.Submit(ctx, i)
 				if err != nil {
-					ErrorIs(ErrWorkerPoolStopped)(t, err)
+					assert.ErrorIs(t, err, ErrWorkerPoolStopped)
 				}
 			}
 		}(context.Background())
@@ -267,7 +277,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject := NewWorkerPool(cb)
 		cancel()
 		err := subject.Submit(ctx, 1)
-		ErrorStringContains("worker pool item submission failed due to context cancellation")(t, err)
+		require.ErrorContains(t, err, "worker pool item submission failed due to context cancellation")
 	})
 
 	t.Run("close with ctx cancel before sending - immediate", func(t *testing.T) {
@@ -276,7 +286,7 @@ func TestWorkerPoolLifeCycle(t *testing.T) {
 		subject := NewWorkerPool(cb, WithShutdownMode(ShutdownModeImmediate))
 		cancel()
 		err := subject.Submit(ctx, 1)
-		ErrorStringContains("worker pool item submission failed due to context cancellation")(t, err)
+		require.ErrorContains(t, err, "worker pool item submission failed due to context cancellation")
 	})
 
 	t.Run("noop with logs", func(t *testing.T) {
@@ -352,7 +362,7 @@ type WorkerPoolTestCase struct {
 	sendsPerSender      int // < 0 means infinite sends
 	stop                bool
 	midFlight           WorkerPoolTestCaseMidFlight
-	assertErrorOnSubmit func(t *testing.T, err error)
+	assertErrorOnSubmit tst.ErrorAssertionFunc
 	asserts             func(t *testing.T, itemsSent uint64, itemsProcessed uint64)
 }
 
@@ -414,64 +424,56 @@ func (tc WorkerPoolTestCase) Test(t *testing.T) {
 func TestFlow(t *testing.T) {
 	tests := map[string]WorkerPoolTestCase{
 		"1 worker 1 sender 100": {
-			opts:           []func(*config){},
-			callback:       noop,
-			workers:        1,
-			senders:        1,
-			sendsPerSender: 100,
-			stop:           true,
-			midFlight:      WorkerPoolTestCaseMidFlight{},
-			assertErrorOnSubmit: func(t *testing.T, err error) {
-				require.NoError(t, err)
-			},
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             1,
+			senders:             1,
+			sendsPerSender:      100,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Equal(t, uint64(100), itemsSent)
 				assert.Equal(t, uint64(100), itemsProcessed)
 			},
 		},
 		"5 workers 10 sender 40k": {
-			opts:           []func(*config){},
-			callback:       noop,
-			workers:        5,
-			senders:        10,
-			sendsPerSender: 40_000,
-			stop:           true,
-			midFlight:      WorkerPoolTestCaseMidFlight{},
-			assertErrorOnSubmit: func(t *testing.T, err error) {
-				require.NoError(t, err)
-			},
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             5,
+			senders:             10,
+			sendsPerSender:      40_000,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Equal(t, uint64(10*40_000), itemsSent)
 				assert.Equal(t, uint64(10*40_000), itemsProcessed)
 			},
 		},
 		"5 workers 10 sender 80k": {
-			opts:           []func(*config){},
-			callback:       noop,
-			workers:        5,
-			senders:        10,
-			sendsPerSender: 80_000,
-			stop:           true,
-			midFlight:      WorkerPoolTestCaseMidFlight{},
-			assertErrorOnSubmit: func(t *testing.T, err error) {
-				require.NoError(t, err)
-			},
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             5,
+			senders:             10,
+			sendsPerSender:      80_000,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Equal(t, uint64(10*80_000), itemsSent)
 				assert.Equal(t, uint64(10*80_000), itemsProcessed)
 			},
 		},
 		"5 workers 40 sender 40k": {
-			opts:           []func(*config){},
-			callback:       noop,
-			workers:        5,
-			senders:        40,
-			sendsPerSender: 40_000,
-			stop:           true,
-			midFlight:      WorkerPoolTestCaseMidFlight{},
-			assertErrorOnSubmit: func(t *testing.T, err error) {
-				require.NoError(t, err)
-			},
+			opts:                []func(*config){},
+			callback:            noop,
+			workers:             5,
+			senders:             40,
+			sendsPerSender:      40_000,
+			stop:                true,
+			midFlight:           WorkerPoolTestCaseMidFlight{},
+			assertErrorOnSubmit: tst.NoError(),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Equal(t, uint64(40*40_000), itemsSent)
 				assert.Equal(t, uint64(40*40_000), itemsProcessed)
@@ -492,11 +494,7 @@ func TestFlow(t *testing.T) {
 					subject.Stop(ctx)
 				},
 			},
-			assertErrorOnSubmit: func(t *testing.T, err error) {
-				if err != nil {
-					require.ErrorIs(t, err, ErrWorkerPoolStopped)
-				}
-			},
+			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Equal(t, itemsSent, itemsProcessed)
 			},
@@ -516,11 +514,7 @@ func TestFlow(t *testing.T) {
 					subject.Stop(ctx)
 				},
 			},
-			assertErrorOnSubmit: func(t *testing.T, err error) {
-				if err != nil {
-					require.ErrorIs(t, err, ErrWorkerPoolStopped)
-				}
-			},
+			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Less(t, itemsProcessed, itemsSent)
 			},
