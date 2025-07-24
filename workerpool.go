@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// ShutdownMode defines how the worker pool behaves during shutdown
+// ShutdownMode defines how the worker pool behaves during shutdown.
 type ShutdownMode int
 
 const (

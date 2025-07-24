@@ -348,7 +348,6 @@ func testConcurrentSubmitsAndClose(t *testing.T, testSize, bufferSize int) {
 }
 
 type WorkerPoolTestCaseMidFlight struct {
-	enabled     bool
 	onSenderID  int
 	onSendCount int
 	fn          func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int])
@@ -399,8 +398,7 @@ func (tc WorkerPoolTestCase) Test(t *testing.T) {
 
 				countSent.Add(1)
 
-				if tc.midFlight.enabled &&
-					tc.midFlight.fn != nil &&
+				if tc.midFlight.fn != nil &&
 					tc.midFlight.onSenderID == senderID &&
 					tc.midFlight.onSendCount == i {
 					tc.midFlight.fn(ctx, ctxCancel, subject)
@@ -487,7 +485,6 @@ func TestFlow(t *testing.T) {
 			sendsPerSender: -1,
 			stop:           false,
 			midFlight: WorkerPoolTestCaseMidFlight{
-				enabled:     true,
 				onSenderID:  2,
 				onSendCount: 15000,
 				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
@@ -507,7 +504,6 @@ func TestFlow(t *testing.T) {
 			sendsPerSender: -1,
 			stop:           false,
 			midFlight: WorkerPoolTestCaseMidFlight{
-				enabled:     true,
 				onSenderID:  2,
 				onSendCount: 15000,
 				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
@@ -515,6 +511,25 @@ func TestFlow(t *testing.T) {
 				},
 			},
 			assertErrorOnSubmit: ifExistsIs(ErrWorkerPoolStopped),
+			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
+				assert.Less(t, itemsProcessed, itemsSent)
+			},
+		},
+		"5 workers 5 sender - stop because of ctx cancel ShutdownModeImmediate": {
+			opts:           []func(*config){WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate)},
+			callback:       noop,
+			workers:        5,
+			senders:        5,
+			sendsPerSender: -1,
+			stop:           false,
+			midFlight: WorkerPoolTestCaseMidFlight{
+				onSenderID:  2,
+				onSendCount: 15000,
+				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
+					ctxCancelFn()
+				},
+			},
+			assertErrorOnSubmit: ifExistsIs(context.Canceled),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Less(t, itemsProcessed, itemsSent)
 			},
