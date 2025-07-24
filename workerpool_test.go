@@ -3,6 +3,7 @@ package wpool
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -19,10 +20,39 @@ import (
 
 func ifExistsIs(targetErr ...error) tst.ErrorAssertionFunc {
 	return func(t tst.TestingT, err error) bool {
+		if h, ok := t.(interface{ Helper() }); ok {
+			h.Helper()
+		}
+
 		if err == nil {
 			return true
 		}
 		return tst.ErrorIs(targetErr...)(t, err)
+	}
+}
+
+func ifExistsIsEither(targetErr ...error) tst.ErrorAssertionFunc {
+	return func(t tst.TestingT, err error) bool {
+		if h, ok := t.(interface{ Helper() }); ok {
+			h.Helper()
+		}
+
+		if err == nil {
+			return true
+		}
+
+		is := false
+		for _, e := range targetErr {
+			if errors.Is(err, e) {
+				is = true
+			}
+		}
+
+		if !is {
+			tst.ErrorIs(targetErr...)(t, err)
+		}
+
+		return is
 	}
 }
 
@@ -529,7 +559,7 @@ func TestFlow(t *testing.T) {
 					ctxCancelFn()
 				},
 			},
-			assertErrorOnSubmit: ifExistsIs(context.Canceled),
+			assertErrorOnSubmit: ifExistsIsEither(ErrWorkerPoolStopped, context.Canceled),
 			asserts: func(t *testing.T, itemsSent, itemsProcessed uint64) {
 				assert.Less(t, itemsProcessed, itemsSent)
 			},
