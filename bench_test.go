@@ -67,19 +67,42 @@ func BenchmarkStop_ShutdownModeImmediate(b *testing.B) {
 }
 
 func BenchmarkWork(b *testing.B) {
+	benchmarkWork(b, ShutdownModeDrain)
+}
+
+func BenchmarkWork_ShutdownModeImmediate(b *testing.B) {
+	benchmarkWork(b, ShutdownModeImmediate)
+}
+
+func benchmarkWork(b *testing.B, sm ShutdownMode) {
+	b.Helper()
+
 	ctx := context.Background()
 
-	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1))
+	subject := NewWorkerPool(noop, WithChannelBufferSize(b.N+1), WithShutdownMode(sm))
 
 	for i := range b.N {
 		_ = subject.Submit(ctx, i)
 	}
-	close(subject.ch)
+	end := (b.N - 1)
+
+	subject.cb = func(_ context.Context, item int) {
+		if item == end {
+			if subject.shutdownMode == ShutdownModeDrain {
+				close(subject.ch)
+			} else {
+				close(subject.stopWorkers)
+			}
+		}
+	}
 
 	subject.workersWG.Add(1)
 	b.ResetTimer()
-	subject.workerDrain(ctx, 0)
-	b.StopTimer()
+	if subject.shutdownMode == ShutdownModeDrain {
+		subject.workerDrain(ctx, 0)
+	} else {
+		subject.workerImmediate(ctx, 0)
+	}
 }
 
 type FullFlowBenchmarkCase struct {
