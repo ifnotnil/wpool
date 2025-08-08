@@ -27,6 +27,8 @@ jobs:
     # https://github.com/actions/checkout
     - uses: actions/checkout@v4
       name: Checkout main
+      with:
+        fetch-depth: 2
 
     - name: Prepare when pr to main
       if: github.event_name == 'pull_request' && github.base_ref == 'main'
