@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Benchmarks
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    env:
+      BENCH_DIR: /tmp/bench
+    steps:
+
+    # https://github.com/actions/setup-go
+    - name: set up go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.24.x"
+        check-latest: true
+        cache: false
+
+    # https://github.com/actions/checkout
+    - uses: actions/checkout@v4
+      name: Checkout main
+
+    - name: Prepare when pr to main
+      if: github.event_name == 'pull_request' && github.base_ref == 'main'
+      shell: bash
+      run: |
+        git fetch origin main
+        echo "COMPARE_WITH=main" >> $GITHUB_ENV
+    - name: Prepare when commit to main
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      shell: bash
+      run: |
+        echo "COMPARE_WITH=$(git rev-parse HEAD~1)" >> $GITHUB_ENV
+
+    - name: Benchmark and Compare
+      shell: bash
+      run: |
+        rm -rf ${{ env.BENCH_DIR }}
+        mkdir -p ${{ env.BENCH_DIR }}
+
+        git log -1
+        rm -rf ${{ env.BENCH_DIR }}/head.txt
+        make ci-bench | tee ${{ env.BENCH_DIR }}/head.txt
+
+        git checkout "${COMPARE_WITH}"
+        git log -1
+        rm -rf ${{ env.BENCH_DIR }}/prev.txt
+        make ci-bench | tee ${{ env.BENCH_DIR }}/prev.txt
+
+        go install golang.org/x/perf/cmd/benchstat@latest
+
+        benchstat ${{ env.BENCH_DIR }}/prev.txt ${{ env.BENCH_DIR }}/head.txt | tee ${{ env.BENCH_DIR }}/summary.txt
+        echo '# Benchmarks stats' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat ${{ env.BENCH_DIR }}/summary.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

@@ -450,6 +450,8 @@ func (tc WorkerPoolTestCase) Test(t *testing.T) {
 
 //nolint:thelper
 func TestFlow(t *testing.T) {
+	tinyWait := func(ctx context.Context, _ int) { time.Sleep(100 * time.Microsecond) }
+
 	tests := map[string]WorkerPoolTestCase{
 		"1 worker 1 sender 100": {
 			opts:                []func(*config){},
@@ -528,14 +530,14 @@ func TestFlow(t *testing.T) {
 		},
 		"5 workers 5 sender ShutdownModeImmediate": {
 			opts:           []func(*config){WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate)},
-			callback:       noop,
+			callback:       tinyWait,
 			workers:        5,
 			senders:        5,
 			sendsPerSender: -1,
 			stop:           false,
 			midFlight: WorkerPoolTestCaseMidFlight{
 				onSenderID:  2,
-				onSendCount: 15000,
+				onSendCount: 400,
 				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
 					subject.Stop(ctx)
 				},
@@ -547,14 +549,14 @@ func TestFlow(t *testing.T) {
 		},
 		"5 workers 5 sender - stop because of ctx cancel ShutdownModeImmediate": {
 			opts:           []func(*config){WithChannelBufferSize(100), WithShutdownMode(ShutdownModeImmediate)},
-			callback:       noop,
+			callback:       tinyWait,
 			workers:        5,
 			senders:        5,
 			sendsPerSender: -1,
 			stop:           false,
 			midFlight: WorkerPoolTestCaseMidFlight{
 				onSenderID:  2,
-				onSendCount: 15000,
+				onSendCount: 400,
 				fn: func(ctx context.Context, ctxCancelFn func(), subject *WorkerPool[int]) {
 					ctxCancelFn()
 				},
