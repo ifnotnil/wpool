@@ -4,7 +4,7 @@ go 1.23.0
 
 // Test dependencies. They will not be pushed downstream as indirect ones.
 require (
-	github.com/ifnotnil/x/tst v0.0.1
+	github.com/ifnotnil/x/tst v0.0.2
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/goleak v1.3.0
 )
