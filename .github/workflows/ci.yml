@@ -9,12 +9,9 @@ on:
 
 jobs:
 
-  lint-and-test:
-    name: Lints and Tests
+  lints:
+    name: Lints
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [ '1.24', '1.25' ]
     steps:
 
     # https://github.com/actions/checkout
@@ -24,9 +21,18 @@ jobs:
     - name: set up go
       uses: actions/setup-go@v6
       with:
-        go-version: "${{ matrix.go-version }}.x"
+        go-version: "1.24.x"
         check-latest: true
         cache: false
+
+    # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
+    # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#environment-files
+    - id: go_version
+      name: Get Go version
+      run: |
+        GO_VER=$(go env GOVERSION | cut -d. -f1-2)
+        echo "Detected Go version: ${GO_VER}"
+        echo "GO_VER=${GO_VER}" >> "$GITHUB_OUTPUT"
 
     # https://github.com/actions/cache
     - name: cache tools
@@ -37,9 +43,9 @@ jobs:
           .tools/
           ~/.cache/go-build
           ~/go/pkg
-        key: ci-tools-${{ runner.os }}-${{ runner.arch }}-${{ matrix.go-version }}-${{ hashFiles('**/go.mod', '**/go.sum', '**/Makefile', 'scripts/tools.mk', '.github/workflows/ci.yml') }}
+        key: ci-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_version.outputs.GO_VER }}-${{ hashFiles('**/go.mod', '**/go.sum', '**/Makefile', 'tools/tools.mk', '.github/workflows/ci.yml') }}
         restore-keys: |
-          ci-tools-${{ runner.os }}-${{ runner.arch }}-${{ matrix.go-version }}
+          ci-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_version.outputs.GO_VER }}
 
     - name: install tools
       # if: steps.cache-tools.outputs.cache-hit != 'true'
@@ -51,7 +57,7 @@ jobs:
         echo ""
         make env
 
-    - name: Check shell files
+    - name: check shell files
       run: make ci-sh
 
     - name: make mod
@@ -66,22 +72,17 @@ jobs:
     - name: golangci-lint
       run: make golangci-lint
 
-    - name: Test
-      run: make test
-
-    # https://github.com/codecov/codecov-action
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v5
-      env:
-        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      if: matrix.go-version == '1.24' && github.event_name == 'push'
-
-  test-mac-win:
+  tests:
     name: Tests
     strategy:
       matrix:
         go-version: [ '1.24', '1.25' ]
-        os: ['macos-latest', 'windows-latest']
+        os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
+        include:
+          - os: 'ubuntu-latest'
+            go-version: '1.25'
+            cover: true
+
     runs-on: "${{ matrix.os }}"
     steps:
       # https://github.com/actions/checkout
@@ -95,5 +96,19 @@ jobs:
         check-latest: true
         cache: false
 
-    - name: Test
-      run: go test -timeout 30s ./...
+    - name: test
+      run: |
+        go test -timeout 30s ./...
+      if: ${{ !matrix.cover }}
+
+    - name: test with cover and race
+      run: |
+        go test -timeout 30s -race -coverprofile=coverage.txt -covermode=atomic ./...
+      if: ${{ matrix.cover }}
+
+    # https://github.com/codecov/codecov-action
+    - name: upload coverage reports to codecov
+      uses: codecov/codecov-action@v5
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      if: ${{ matrix.cover }}

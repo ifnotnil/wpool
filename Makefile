@@ -6,7 +6,7 @@ SHELL := /usr/bin/env bash
 .NOTINTERMEDIATE:
 
 include $(CURDIR)/scripts/go.mk
-include $(CURDIR)/scripts/tools.mk
+include $(CURDIR)/tools/tools.mk
 
 .DEFAULT_GOAL=default
 .PHONY: default
