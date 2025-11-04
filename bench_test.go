@@ -19,7 +19,7 @@ func (s ShutdownMode) String() string {
 }
 
 func BenchmarkNew(b *testing.B) {
-	for range b.N {
+	for b.Loop() {
 		NewWorkerPool(noop)
 	}
 }
@@ -54,14 +54,14 @@ func BenchmarkSubmit_ShutdownModeImmediate(b *testing.B) {
 
 func BenchmarkStop(b *testing.B) {
 	ctx := context.Background()
-	for range b.N {
+	for b.Loop() {
 		NewWorkerPool(noop).Stop(ctx)
 	}
 }
 
 func BenchmarkStop_ShutdownModeImmediate(b *testing.B) {
 	ctx := context.Background()
-	for range b.N {
+	for b.Loop() {
 		NewWorkerPool(noop, WithShutdownMode(ShutdownModeImmediate)).Stop(ctx)
 	}
 }
