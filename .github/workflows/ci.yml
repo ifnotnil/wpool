@@ -15,7 +15,7 @@ jobs:
     steps:
 
     # https://github.com/actions/checkout
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     # https://github.com/actions/setup-go
     - name: set up go
@@ -86,7 +86,7 @@ jobs:
     runs-on: "${{ matrix.os }}"
     steps:
       # https://github.com/actions/checkout
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     # https://github.com/actions/setup-go
     - name: set up go
