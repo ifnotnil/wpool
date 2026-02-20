@@ -9,10 +9,7 @@ export PATH := $(TOOLS_BIN):$(PATH)
 
 .PHONY: tools
 tools: \
-	$(TOOLS_BIN)/goimports \
-	$(TOOLS_BIN)/staticcheck \
 	$(TOOLS_BIN)/golangci-lint \
-	$(TOOLS_BIN)/gofumpt \
 	$(TOOLS_BIN)/gojq \
 	$(TOOLS_BIN)/shfmt \
 	$(TOOLS_BIN)/shellcheck
