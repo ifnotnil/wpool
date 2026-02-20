@@ -9,10 +9,7 @@ export PATH := $(TOOLS_BIN):$(PATH)
 
 .PHONY: tools
 tools: \
-	$(TOOLS_BIN)/goimports \
-	$(TOOLS_BIN)/staticcheck \
 	$(TOOLS_BIN)/golangci-lint \
-	$(TOOLS_BIN)/gofumpt \
 	$(TOOLS_BIN)/gojq \
 	$(TOOLS_BIN)/shfmt \
 	$(TOOLS_BIN)/shellcheck
@@ -51,19 +48,6 @@ vet:
 	go vet `$(GO_PACKAGES)`
 	@echo ""
 
-## <staticcheck>
-# https://github.com/dominikh/go-tools/releases    https://staticcheck.io/c
-STATICCHECK_MOD:=honnef.co/go/tools
-STATICCHECK_VER:=$(call go_mod_ver,$(STATICCHECK_MOD))
-$(TOOLS_BIN)/staticcheck: $(TOOLS_DB)/staticcheck.$(STATICCHECK_VER).$(GO_VER).ver
-	$(call go_install,staticcheck,$(STATICCHECK_MOD)/cmd/staticcheck,$(STATICCHECK_VER))
-
-.PHONY: staticcheck
-staticcheck: $(TOOLS_BIN)/staticcheck
-	$(TOOLS_BIN)/staticcheck -f=stylish -checks=all,-ST1000 -tests ./...
-	@echo ''
-## </staticcheck>
-
 ## <golangci-lint>
 # https://github.com/golangci/golangci-lint/releases
 GOLANGCI-LINT_MOD:=github.com/golangci/golangci-lint/v2
@@ -81,38 +65,6 @@ golangci-lint-fmt: $(TOOLS_BIN)/golangci-lint
 	golangci-lint fmt
 	@echo ''
 ## </golangci-lint>
-
-## <goimports>
-# https://pkg.go.dev/golang.org/x/tools?tab=versions
-GOIMPORTS_MOD:=golang.org/x/tools
-GOIMPORTS_VER:=$(call go_mod_ver,$(GOIMPORTS_MOD))
-$(TOOLS_BIN)/goimports: $(TOOLS_DB)/goimports.$(GOIMPORTS_VER).$(GO_VER).ver
-	$(call go_install,goimports,$(GOIMPORTS_MOD)/cmd/goimports,$(GOIMPORTS_VER))
-
-.PHONY: goimports
-goimports: $(TOOLS_BIN)/goimports
-	goimports -w `$(GO_FILES)`
-
-.PHONY: goimports.display
-goimports.display: $(TOOLS_BIN)/goimports
-	goimports -d `$(GO_FILES)`
-## </goimports>
-
-## <gofumpt>
-# https://github.com/mvdan/gofumpt/releases
-GOFUMPT_MOD:=mvdan.cc/gofumpt
-GOFUMPT_VER:=$(call go_mod_ver,$(GOFUMPT_MOD))
-$(TOOLS_BIN)/gofumpt: $(TOOLS_DB)/gofumpt.$(GOFUMPT_VER).$(GO_VER).ver
-	$(call go_install,gofumpt,$(GOFUMPT_MOD),$(GOFUMPT_VER))
-
-.PHONY: gofumpt
-gofumpt: $(TOOLS_BIN)/gofumpt
-	gofumpt -w `$(GO_FILES)`
-
-.PHONY: gofumpt.display
-gofumpt.display:
-	gofumpt -d `$(GO_FILES)`
-## </gofumpt>
 
 ## <gofmt>
 .PHONY: gofmt
