@@ -105,7 +105,7 @@ jobs:
 
     # https://github.com/codecov/codecov-action
     - name: upload coverage reports to codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v6
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       if: ${{ matrix.cover }}
