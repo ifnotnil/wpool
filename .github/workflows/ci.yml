@@ -17,13 +17,14 @@ jobs:
     # https://github.com/actions/checkout
     - uses: actions/checkout@v7
 
-    # https://github.com/actions/setup-go
-    - name: set up go
-      uses: actions/setup-go@v6
+    - uses: jdx/mise-action@v4
       with:
-        go-version: "1.26.x"
-        check-latest: true
-        cache: false
+        install: true # [default: true] run `mise install`
+        cache: true # [default: true] cache mise using GitHub's cache
+        experimental: false # [default: false] enable experimental features
+        log_level: debug # [default: info] log level
+        cache_key: "mise-{{platform}}-{{install_args_hash}}-{{file_hash}}"
+
 
     # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
     # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#environment-files
@@ -34,22 +35,26 @@ jobs:
         echo "Detected Go version: ${GO_VER}"
         echo "GO_VER=${GO_VER}" >> "$GITHUB_OUTPUT"
 
+        GOCACHE=$(go env GOCACHE)
+        echo "Detected GOCACHE: ${GOCACHE}"
+        echo "GOCACHE=${GOCACHE}" >> "$GITHUB_OUTPUT"
+
+        GOPATH=$(go env GOPATH)
+        echo "Detected GOPATH: ${GOPATH}"
+        echo "GOPATH=${GOPATH}" >> "$GITHUB_OUTPUT"
+
+
     # https://github.com/actions/cache
-    - name: cache tools
-      id: cache-tools
+    - name: cache go deps
+      id: cache-go
       uses: actions/cache@v6
       with:
         path: |
-          .tools/
-          ~/.cache/go-build
-          ~/go/pkg
-        key: ci-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_version.outputs.GO_VER }}-${{ hashFiles('**/go.mod', '**/go.sum', '**/Makefile', 'tools/tools.mk', '.github/workflows/ci.yml') }}
+          ${{ steps.go_version.outputs.GOCACHE }}
+          ${{ steps.go_version.outputs.GOPATH }}
+        key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.mod', '**/go.sum', '.github/workflows/ci.yml') }}
         restore-keys: |
-          ci-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_version.outputs.GO_VER }}
-
-    - name: install tools
-      # if: steps.cache-tools.outputs.cache-hit != 'true'
-      run: make tools
+          ci-go-${{ runner.os }}-${{ runner.arch }}-
 
     - name: env
       run: |
