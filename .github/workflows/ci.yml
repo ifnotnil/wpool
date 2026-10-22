@@ -17,7 +17,7 @@ jobs:
     # https://github.com/actions/checkout
     - uses: actions/checkout@v7
 
-    - uses: jdx/mise-action@v5.1.2
+    - uses: jdx/mise-action@v5.2.1
       with:
         install: true # [default: true] run `mise install`
         cache: true # [default: true] cache mise using GitHub's cache
